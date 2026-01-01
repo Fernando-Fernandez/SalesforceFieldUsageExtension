@@ -179,6 +179,7 @@
             );
         }
         renderSObjectOptions();
+        updateProcessButtonState();
     }
 
     async function handleFilterKeydown(event) {
@@ -634,8 +635,10 @@
             return;
         }
         const hasSObjects = state.selectedSObjects.length > 0;
-        processSelectionsBtn.disabled = !hasSObjects;
-        if (!hasSObjects) {
+        const hasFilterText = sobjectFilterEl.value.trim().length > 0;
+        const enableProcess = hasSObjects || hasFilterText;
+        processSelectionsBtn.disabled = !enableProcess;
+        if (!enableProcess) {
             setProcessStatus("");
         }
     }
@@ -649,20 +652,36 @@
 
     async function handleProcessSelections() {
         setProcessStatus("");
-        if (!state.selectedSObjects.length) {
+
+        const filterValue = sobjectFilterEl.value.trim();
+        const filterMatch = filterValue
+            ? state.sobjects.find(
+                  (obj) =>
+                      obj.name.toLowerCase() === filterValue.toLowerCase() ||
+                      obj.label.toLowerCase() === filterValue.toLowerCase()
+              )
+            : null;
+
+        const targetSObjects = state.selectedSObjects.length
+            ? state.selectedSObjects.slice()
+            : filterMatch
+            ? [filterMatch.name]
+            : [];
+
+        if (!targetSObjects.length) {
             setStatus("Select at least one SObject before processing.", "error");
             return;
         }
 
         try {
-            await ensureFieldsLoaded(state.selectedSObjects);
+            await ensureFieldsLoaded(targetSObjects);
         } catch (error) {
             setStatus(`Unable to load fields: ${error.message}`, "error");
             setProcessStatus("");
             return;
         }
 
-        const selections = buildSelectionPairs(true);
+        const selections = buildSelectionPairs(true, targetSObjects);
         if (!selections.length) {
             setStatus("No fields available to process.", "error");
             setProcessStatus("");
@@ -808,9 +827,9 @@
         }
     }
 
-    function buildSelectionPairs(includeAllWhenEmpty = false) {
+    function buildSelectionPairs(includeAllWhenEmpty = false, targetSObjects = state.selectedSObjects) {
         const pairs = [];
-        state.selectedSObjects.forEach((sobject) => {
+        targetSObjects.forEach((sobject) => {
             let fields = state.selectedFields.get(sobject) || [];
             if ((!fields || fields.length === 0) && includeAllWhenEmpty) {
                 const described = state.fieldCache.get(sobject) || [];

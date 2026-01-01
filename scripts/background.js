@@ -33,6 +33,7 @@ function getHostAndSession( message, sender, responseCallback ) {
         responseCallback( tabSessionMap.get( requestedTabUrl ) );
         return;
     }
+    console.log( "Getting session for url: ", requestedTabUrl );
 
     // first, get org id from unsecure cookie
     console.log( "Sender: ", sender );

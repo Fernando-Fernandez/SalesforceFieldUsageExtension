@@ -9,15 +9,17 @@ body {
     padding: 0;
     width: 820px;
     min-width: 820px;
-    height: 1200px;
-    min-height: 1200px;
+    height: 900px;
+    min-height: 900px;
+    display: flex;
+    flex-direction: column;
 }
 
 main {
     box-sizing: border-box;
-    padding: .5rem 2rem .5rem .5rem;
-    min-height: 1200px;
-    max-width: 100%;
+    padding: 0.5rem 2rem 6rem 0.5rem;
+    flex: 1;
+    overflow-y: auto;
 }
 
 h1 {
@@ -158,6 +160,15 @@ select {
     align-items: center;
     justify-content: space-between;
     gap: 1rem;
+    position: fixed;
+    left: 0;
+    bottom: -1rem;
+    border-radius: 0;
+    width: 100%;
+    box-sizing: border-box;
+    background-color: #fff;
+    padding: 1rem 2rem 1rem 0.5rem;
+    box-shadow: 0 -2px 6px rgba(0, 0, 0, 0.08);
 }
 
 .action-panel__status {
