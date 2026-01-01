@@ -9,6 +9,10 @@ This browser extension helps Salesforce administrators understand how their org 
 
 Use these insights to decide which fields can be deprecated, which require user training, and where data validation rules might be missing.
 
+![Salesforce Field Usage summary report with field distributions](images/Salesforce%20Field%20Usage%20Report1.png)
+
+![Salesforce Field Usage report detail showing charts, tables, and timeline](images/Salesforce%20Field%20Usage%20Report2.png)
+
 ## Usage
 1. Open a Salesforce tab and then launch the extension popup.
 2. Filter or select one or more SObjects, then optionally select specific fields. If you leave fields unselected, the extension falls back to the non-null usage plan for every field on the selected objects.
@@ -19,9 +23,8 @@ Use these insights to decide which fields can be deprecated, which require user 
    - A monthly trend section with a stacked bar chart (log scale) plus a month/year table so you can see how each value evolves over the last 12 months.
 
 ## Loading the Extension
-1. Run `npm install` if your workflow requires additional tooling (not strictly necessary for the extension itself).
-2. In Chrome, navigate to `chrome://extensions`, enable **Developer Mode**, and choose **Load unpacked**.
-3. Select the repository root (`SalesforceFieldUsageExtension`) and pin the extension for easy access.
+1. In Chrome, navigate to `chrome://extensions`, enable **Developer Mode**, and choose **Load unpacked**.
+2. Select the repository root (`SalesforceFieldUsageExtension`) and pin the extension for easy access.
 
 ## Requirements & Notes
 - You must already be authenticated in the Salesforce tab you query; the background service worker reuses the current session.
