@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Salesforce Field Usage Explorer</title>
+    <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+<main>
+    <h1>Field Usage Explorer</h1>
+    <p class="help-text">
+        Select one or more SObjects, then choose the fields you want to evaluate for usage, distinct values, and trends.
+    </p>
+
+    <div id="status" class="status status-info">Connecting to Salesforce…</div>
+
+    <section class="panel">
+        <h2>SObjects</h2>
+        <label for="sobjectFilter">Type to filter API names or labels</label>
+        <input type="text" id="sobjectFilter" placeholder="Example: Account, Opportunity, CustomObject__c">
+        <div class="help-text">Move SObjects between the lists to decide which ones to analyze.</div>
+        <div class="dual-list">
+            <div class="dual-list__column">
+                <label for="sobjectAvailable">Available SObjects</label>
+                <select id="sobjectAvailable" multiple size="10" aria-label="Available SObjects"></select>
+            </div>
+            <div class="dual-list__controls">
+                <button type="button" id="addSobjectBtn">Add &rarr;</button>
+                <button type="button" id="removeSobjectBtn">&larr; Remove</button>
+            </div>
+            <div class="dual-list__column">
+                <label for="sobjectSelected">Selected SObjects</label>
+                <select id="sobjectSelected" multiple size="10" aria-label="Selected SObjects"></select>
+            </div>
+        </div>
+    </section>
+
+    <section id="fieldSection" class="panel" hidden>
+        <h2>Fields</h2>
+        <p class="help-text">Use the dual list to choose fields (grouped by SObject) to analyze.</p>
+        <div class="dual-list">
+            <div class="dual-list__column">
+                <label for="fieldAvailable">Available Fields</label>
+                <select id="fieldAvailable" multiple size="12" aria-label="Available Fields"></select>
+            </div>
+            <div class="dual-list__controls">
+                <button type="button" id="addFieldBtn">Add &rarr;</button>
+                <button type="button" id="removeFieldBtn">&larr; Remove</button>
+            </div>
+            <div class="dual-list__column">
+                <label for="fieldSelected">Selected Fields</label>
+                <select id="fieldSelected" multiple size="12" aria-label="Selected Fields"></select>
+            </div>
+        </div>
+    </section>
+
+    <section class="panel action-panel">
+        <div class="action-panel__status" id="processStatus"></div>
+        <button id="processSelectionBtn" type="button" disabled>Process Selections</button>
+    </section>
+</main>
+
+<script src="scripts/popup.js"></script>
+</body>
+</html>

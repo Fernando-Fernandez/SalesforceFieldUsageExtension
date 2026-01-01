@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Salesforce Field Usage Report</title>
+    <link rel="stylesheet" href="report.css">
+</head>
+<body>
+<main>
+    <header>
+        <h1>Salesforce Field Usage</h1>
+        <div id="reportMeta"></div>
+    </header>
+
+    <section id="reportStatus" class="status status-info">
+        Loading report data…
+    </section>
+
+    <section id="histogramSection" hidden>
+        <h2>Null Percentage Histogram</h2>
+        <canvas id="histogramCanvas" width="900" height="220" role="img" aria-label="Histogram of null percentages"></canvas>
+        <p class="histogram-legend" id="histogramLegend"></p>
+    </section>
+
+    <section id="reportTableSection" hidden>
+        <table>
+            <thead>
+                <tr>
+                    <th data-sort-key="sobject">SObject</th>
+                    <th data-sort-key="field">Field</th>
+                    <th data-sort-key="sobjectcardinality">SObject count</th>
+                    <th data-sort-key="cardinality">Non-Null count</th>
+                    <th data-sort-key="nonNullPercentage">% Non-Nulls</th>
+                    <th data-sort-key="status">Status</th>
+                </tr>
+            </thead>
+            <tbody id="reportTableBody"></tbody>
+        </table>
+    </section>
+</main>
+
+<script src="scripts/report.js"></script>
+</body>
+</html>
