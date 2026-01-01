@@ -1,7 +1,7 @@
 {
     "manifest_version": 3
     , "name": "Salesforce Field Usage Extension"
-    , "version": "1.0.1"
+    , "version": "1.0.2"
     , "description": "Reports Salesforce field usage and trends to help with data quality and other issues."
     , "icons": {
       "16": "images/blueGear-16.png",
