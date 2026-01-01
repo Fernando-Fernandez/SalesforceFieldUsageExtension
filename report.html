@@ -16,10 +16,9 @@
         Loading report data…
     </section>
 
-    <section id="histogramSection" hidden>
-        <h2>Null Percentage Histogram</h2>
-        <canvas id="histogramCanvas" width="900" height="220" role="img" aria-label="Histogram of null percentages"></canvas>
-        <p class="histogram-legend" id="histogramLegend"></p>
+    <section id="chartSection" hidden>
+        <h2>Field Non-Null Percentage</h2>
+        <div class="chart-container" id="fieldChartContainer" role="img" aria-label="Bar chart of field non-null percentages"></div>
     </section>
 
     <section id="reportTableSection" hidden>
@@ -28,8 +27,8 @@
                 <tr>
                     <th data-sort-key="sobject">SObject</th>
                     <th data-sort-key="field">Field</th>
-                    <th data-sort-key="sobjectcardinality">SObject count</th>
-                    <th data-sort-key="cardinality">Non-Null count</th>
+                    <th data-sort-key="sobjectCount">SObject Count</th>
+                    <th data-sort-key="nonNullCount">Estimated Non-Null Count</th>
                     <th data-sort-key="nonNullPercentage">% Non-Nulls</th>
                     <th data-sort-key="status">Status</th>
                 </tr>

@@ -31,6 +31,7 @@
 
     document.addEventListener("DOMContentLoaded", init);
     sobjectFilterEl.addEventListener("input", handleFilter);
+    sobjectFilterEl.addEventListener("keydown", handleFilterKeydown);
     addSobjectBtn.addEventListener("click", handleAddSObjects);
     removeSobjectBtn.addEventListener("click", handleRemoveSObjects);
     addFieldBtn.addEventListener("click", handleAddFields);
@@ -38,6 +39,7 @@
     processSelectionsBtn.addEventListener("click", handleProcessSelections);
     updateProcessButtonState();
     setProcessStatus("");
+    clearFieldLists();
 
     async function init() {
         try {
@@ -179,6 +181,27 @@
         renderSObjectOptions();
     }
 
+    async function handleFilterKeydown(event) {
+        if (event.key !== "Enter") {
+            return;
+        }
+        event.preventDefault();
+        if (!state.filteredSObjects.length) {
+            return;
+        }
+        const targetSObject = state.filteredSObjects[0];
+        if (!targetSObject) {
+            return;
+        }
+        if (state.selectedSObjects.includes(targetSObject.name)) {
+            return;
+        }
+        state.selectedSObjects = [...state.selectedSObjects, targetSObject.name];
+        renderSObjectOptions();
+        await syncFieldSelectors(state.selectedSObjects);
+        updateProcessButtonState();
+    }
+
     function setSObjects(sobjects) {
         state.sobjects = sobjects
             .filter((obj) => obj && obj.name)
@@ -226,17 +249,19 @@
     }
 
     function toggleFieldSection(show) {
-        fieldSectionEl.hidden = !show;
+        if (!show) {
+            clearFieldLists();
+        }
     }
 
     async function syncFieldSelectors(selectedSObjects) {
         if (!selectedSObjects.length) {
             clearFieldLists();
-            fieldSectionEl.hidden = true;
             return;
         }
 
-        fieldSectionEl.hidden = false;
+        setFieldSelectPlaceholder(fieldAvailableEl, "Loading fields…");
+        setFieldSelectPlaceholder(fieldSelectedEl, "Loading fields…");
         await ensureFieldsLoaded(selectedSObjects);
         renderFieldLists();
     }
@@ -288,15 +313,22 @@
     }
 
     function clearFieldLists() {
-        if (fieldAvailableEl) {
-            fieldAvailableEl.innerHTML = "";
-            fieldAvailableEl.disabled = true;
-        }
-        if (fieldSelectedEl) {
-            fieldSelectedEl.innerHTML = "";
-            fieldSelectedEl.disabled = true;
-        }
+        setFieldSelectPlaceholder(fieldAvailableEl, "Select SObjects to load fields.");
+        setFieldSelectPlaceholder(fieldSelectedEl, "Selected fields will appear here.");
         updateProcessButtonState();
+    }
+
+    function setFieldSelectPlaceholder(selectEl, message) {
+        if (!selectEl) {
+            return;
+        }
+        selectEl.innerHTML = "";
+        const option = document.createElement("option");
+        option.textContent = message;
+        option.disabled = true;
+        option.selected = true;
+        selectEl.appendChild(option);
+        selectEl.disabled = true;
     }
 
     async function getFieldsForSObject(sobject) {
@@ -367,7 +399,16 @@
             hasOptions = true;
         });
 
-        selectEl.disabled = !hasOptions;
+        if (!hasOptions) {
+            const message = useSelectedValues
+                ? "No fields selected yet."
+                : state.selectedSObjects.length
+                    ? "All fields already selected."
+                    : "Select SObjects to load fields.";
+            setFieldSelectPlaceholder(selectEl, message);
+        } else {
+            selectEl.disabled = false;
+        }
     }
 
     function handleAddFields() {
@@ -525,9 +566,9 @@
         }
 
         return {
-            cardinality,
-            sobjectCardinality,
-            nullPercentage: sobjectCardinality === 0 ? 0 : cardinality / sobjectCardinality
+            nonNullCount: cardinality,
+            sobjectCount: sobjectCardinality,
+            nonNullPercentage: sobjectCardinality === 0 ? 0 : cardinality / sobjectCardinality
         };
     }
 
@@ -662,9 +703,9 @@
                     sobjectLabel: detail.sobjectLabel,
                     field: detail.field,
                     fieldLabel: detail.fieldLabel,
-                    cardinality: null,
-                    sobjectCardinality: null,
-                    nullPercentage: null,
+                    nonNullCount: null,
+                    sobjectCount: null,
+                    nonNullPercentage: null,
                     status: "Skipped: field metadata unavailable."
                 });
             } else if (!isFilterableField(detail.metadata)) {
@@ -673,9 +714,9 @@
                     sobjectLabel: detail.sobjectLabel,
                     field: detail.field,
                     fieldLabel: detail.fieldLabel,
-                    cardinality: null,
-                    sobjectCardinality: null,
-                    nullPercentage: null,
+                    nonNullCount: null,
+                    sobjectCount: null,
+                    nonNullPercentage: null,
                     status: "Skipped: textarea/address fields cannot be used as filter criteria."
                 });
             }
@@ -701,9 +742,9 @@
                         sobjectLabel: detail.sobjectLabel,
                         field: detail.field,
                         fieldLabel: detail.fieldLabel,
-                        cardinality: null,
-                        sobjectCardinality: null,
-                        nullPercentage: null,
+                        nonNullCount: null,
+                        sobjectCount: null,
+                        nonNullPercentage: null,
                         status: `Error: ${error.message || error}`
                     });
                 });
@@ -722,9 +763,9 @@
                         sobjectLabel: detail.sobjectLabel,
                         field: detail.field,
                         fieldLabel: detail.fieldLabel,
-                        cardinality: null,
-                        sobjectCardinality: null,
-                        nullPercentage: null,
+                        nonNullCount: null,
+                        sobjectCount: null,
+                        nonNullPercentage: null,
                         status: "Error: Missing response from composite batch."
                     });
                 } else if (entry.error) {
@@ -733,9 +774,9 @@
                         sobjectLabel: detail.sobjectLabel,
                         field: detail.field,
                         fieldLabel: detail.fieldLabel,
-                        cardinality: null,
-                        sobjectCardinality: null,
-                        nullPercentage: null,
+                        nonNullCount: null,
+                        sobjectCount: null,
+                        nonNullPercentage: null,
                         status: `Error: ${entry.error}`
                     });
                 } else {
@@ -744,9 +785,9 @@
                         sobjectLabel: detail.sobjectLabel,
                         field: detail.field,
                         fieldLabel: detail.fieldLabel,
-                        cardinality: entry.plan.cardinality,
-                        sobjectCardinality: entry.plan.sobjectCardinality,
-                        nullPercentage: entry.plan.nullPercentage,
+                        nonNullCount: entry.plan.nonNullCount,
+                        sobjectCount: entry.plan.sobjectCount,
+                        nonNullPercentage: entry.plan.nonNullPercentage,
                         status: "Success"
                     });
                 }
