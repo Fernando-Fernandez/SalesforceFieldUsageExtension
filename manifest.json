@@ -4,18 +4,18 @@
     , "version": "1.0.1"
     , "description": "Reports Salesforce field usage and trends to help with data quality and other issues."
     , "icons": {
-      "16": "images/icon-16.png",
-      "32": "images/icon-32.png",
-      "48": "images/icon-48.png",
-      "128": "images/icon-128.png"
+      "16": "images/blueGear-16.png",
+      "32": "images/blueGear-32.png",
+      "48": "images/blueGear-48.png",
+      "128": "images/blueGear-128.png"
     }
 
     , "action": {
         "default_icon": {
-            "16": "images/icon-16.png",
-            "32": "images/icon-32.png",
-            "48": "images/icon-48.png",
-            "128": "images/icon-128.png"
+            "16": "images/blueGear-16.png",
+            "32": "images/blueGear-32.png",
+            "48": "images/blueGear-48.png",
+            "128": "images/blueGear-128.png"
         },
         "default_popup": "popup.html"
     }
