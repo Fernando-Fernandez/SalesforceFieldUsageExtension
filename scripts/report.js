@@ -46,6 +46,7 @@
                     chartSectionEl.hidden = true;
                 }
                 tableSectionEl.hidden = true;
+                clearStatus();
                 return;
             }
 
@@ -58,6 +59,7 @@
             }
             renderTable(state.results);
             renderBarChart(state.results);
+            clearStatus();
             tableSectionEl.hidden = false;
         } catch (error) {
             console.error("Unable to load report", error);
@@ -123,8 +125,18 @@
         if (!statusEl) {
             return;
         }
+        statusEl.hidden = false;
         statusEl.textContent = message;
         statusEl.className = `status status-${type}`;
+    }
+
+    function clearStatus() {
+        if (!statusEl) {
+            return;
+        }
+        statusEl.textContent = "";
+        statusEl.className = "status";
+        statusEl.hidden = true;
     }
 
     function formatNumber(value) {
@@ -386,6 +398,10 @@
                 card.appendChild(chartEl);
             }
 
+            const timelineRows = Array.isArray(result.timeline)
+                ? result.timeline.filter((row) => Number(row?.count ?? 0) > 0)
+                : [];
+
             const table = document.createElement("table");
             const thead = document.createElement("thead");
             thead.innerHTML = `
@@ -422,6 +438,12 @@
             }
             table.appendChild(tbody);
             card.appendChild(table);
+
+            const timelineEl = buildTimelineSection(timelineRows, result.timelineMessage);
+            if (timelineEl) {
+                card.appendChild(timelineEl);
+            }
+
             distributionContainerEl.appendChild(card);
         });
     }
@@ -460,6 +482,240 @@
         });
 
         return chart;
+    }
+
+    function buildTimelineSection(rows, message) {
+        const hasRows = Array.isArray(rows) && rows.length > 0;
+        if (!hasRows && !message) {
+            return null;
+        }
+        const container = document.createElement("div");
+        container.className = "distribution-timeline";
+
+        const title = document.createElement("h4");
+        title.textContent = "Monthly Trend (Last 12 Months)";
+        container.appendChild(title);
+
+        if (hasRows) {
+            const chart = buildTimelineChart(rows);
+            if (chart) {
+                container.appendChild(chart);
+            }
+
+            const table = document.createElement("table");
+            const thead = document.createElement("thead");
+            thead.innerHTML = `
+                <tr>
+                    <th>Period</th>
+                    <th>Value</th>
+                    <th>Value Count</th>
+                    <th>Period %</th>
+                </tr>
+            `;
+            table.appendChild(thead);
+
+            const tbody = document.createElement("tbody");
+            rows
+                .slice()
+                .sort((a, b) => {
+                    const aKey = (a.year || 0) * 100 + (a.month || 0);
+                    const bKey = (b.year || 0) * 100 + (b.month || 0);
+                    if (aKey === bKey) {
+                        return formatDistributionValue(a.value).localeCompare(formatDistributionValue(b.value));
+                    }
+                    return aKey - bKey;
+                })
+                .forEach((row) => {
+                    const tr = document.createElement("tr");
+                    tr.appendChild(createCell(formatTimelinePeriod(row.year, row.month)));
+                    tr.appendChild(createCell(formatDistributionValue(row.value)));
+                    tr.appendChild(createCell(formatNumber(row.count)));
+                    tr.appendChild(createCell(formatPercentage(row.percentage)));
+                    tbody.appendChild(tr);
+                });
+
+            table.appendChild(tbody);
+            container.appendChild(table);
+        }
+
+        if (message && !hasRows) {
+            const note = document.createElement("p");
+            note.className = "distribution-timeline__empty";
+            note.textContent = message;
+            container.appendChild(note);
+        }
+
+        return container;
+    }
+
+    function formatTimelinePeriod(year, month) {
+        if (!year || !month) {
+            return "—";
+        }
+        const date = new Date(year, month - 1, 1);
+        return date.toLocaleString(undefined, { month: "short", year: "numeric" });
+    }
+
+    function buildTimelineChart(rows) {
+        if (!Array.isArray(rows) || !rows.length) {
+            return null;
+        }
+        const periods = getTimelinePeriods(rows);
+        if (!periods.length) {
+            return null;
+        }
+        const values = getTimelineValues(rows);
+        const maxCount = Math.max(...rows.map((row) => row.count || 0), 0);
+        if (maxCount === 0) {
+            return null;
+        }
+
+        const groupWidth = values.length * 22 + 12;
+        const width = Math.max(periods.length * groupWidth + 60, 320);
+        const height = 220;
+        const padding = { top: 20, right: 20, bottom: 50, left: 50 };
+        const plotWidth = width - padding.left - padding.right;
+        const plotHeight = height - padding.top - padding.bottom;
+        const logMax = Math.log(maxCount + 1);
+
+        const chartWrapper = document.createElement("div");
+        chartWrapper.className = "timeline-chart";
+
+        const legend = document.createElement("div");
+        legend.className = "timeline-chart__legend";
+        values.forEach((valueLabel, index) => {
+            const legendItem = document.createElement("span");
+            legendItem.className = "timeline-chart__legend-item";
+
+            const swatch = document.createElement("span");
+            swatch.className = "timeline-chart__legend-swatch";
+            swatch.style.backgroundColor = getTimelineColor(index);
+
+            legendItem.appendChild(swatch);
+            legendItem.appendChild(document.createTextNode(valueLabel));
+            legend.appendChild(legendItem);
+        });
+        chartWrapper.appendChild(legend);
+
+        const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+        svg.setAttribute("width", "100%");
+        svg.setAttribute("height", height);
+        svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+
+        const axis = document.createElementNS(svg.namespaceURI, "line");
+        axis.setAttribute("x1", padding.left);
+        axis.setAttribute("y1", padding.top + plotHeight);
+        axis.setAttribute("x2", padding.left + plotWidth);
+        axis.setAttribute("y2", padding.top + plotHeight);
+        axis.setAttribute("stroke", "#d0d7e5");
+        svg.appendChild(axis);
+
+        const groupMap = buildTimelineGroupMap(rows);
+
+        periods.forEach((period, periodIndex) => {
+            values.forEach((valueLabel, valueIndex) => {
+                const count = groupMap.get(period.key)?.[valueLabel] || 0;
+                if (!count) {
+                    return;
+                }
+                const barHeight = logMax === 0 ? 0 : (Math.log(count + 1) / logMax) * plotHeight;
+                const x =
+                    padding.left +
+                    periodIndex * groupWidth +
+                    valueIndex * 22;
+                const y = padding.top + plotHeight - barHeight;
+                const rect = document.createElementNS(svg.namespaceURI, "rect");
+                rect.setAttribute("x", x);
+                rect.setAttribute("y", y);
+                rect.setAttribute("width", 18);
+                rect.setAttribute("height", Math.max(barHeight, 1));
+                rect.setAttribute("fill", getTimelineColor(valueIndex));
+                svg.appendChild(rect);
+
+                const label = document.createElementNS(svg.namespaceURI, "text");
+                label.textContent = count.toLocaleString();
+                label.setAttribute("x", x + 9);
+                label.setAttribute("y", Math.max(y - 4, 12));
+                label.setAttribute("text-anchor", "middle");
+                label.setAttribute("fill", "#1f1f1f");
+                label.setAttribute("font-size", "10");
+                svg.appendChild(label);
+            });
+
+            const periodLabel = document.createElementNS(svg.namespaceURI, "text");
+            periodLabel.textContent = period.label;
+            periodLabel.setAttribute("x", padding.left + periodIndex * groupWidth + (values.length * 22) / 2);
+            periodLabel.setAttribute("y", padding.top + plotHeight + 20);
+            periodLabel.setAttribute("text-anchor", "middle");
+            periodLabel.setAttribute("fill", "#2f3c4d");
+            periodLabel.setAttribute("font-size", "11");
+            svg.appendChild(periodLabel);
+        });
+
+        chartWrapper.appendChild(svg);
+        return chartWrapper;
+    }
+
+    function getTimelinePeriods(rows) {
+        const map = new Map();
+        rows.forEach((row) => {
+            if (!row.year || !row.month) {
+                return;
+            }
+            const key = `${row.year}-${row.month}`;
+            if (!map.has(key)) {
+                map.set(key, {
+                    key,
+                    sortValue: row.year * 100 + row.month,
+                    label: formatTimelinePeriod(row.year, row.month)
+                });
+            }
+        });
+        return Array.from(map.values()).sort((a, b) => a.sortValue - b.sortValue);
+    }
+
+    function getTimelineValues(rows) {
+        const seen = new Map();
+        rows.forEach((row) => {
+            const label = formatDistributionValue(row.value);
+            if (!seen.has(label)) {
+                seen.set(label, label);
+            }
+        });
+        return Array.from(seen.keys());
+    }
+
+    function buildTimelineGroupMap(rows) {
+        const groupMap = new Map();
+        rows.forEach((row) => {
+            if (!row.year || !row.month) {
+                return;
+            }
+            const key = `${row.year}-${row.month}`;
+            if (!groupMap.has(key)) {
+                groupMap.set(key, {});
+            }
+            const group = groupMap.get(key);
+            const label = formatDistributionValue(row.value);
+            group[label] = (group[label] || 0) + (row.count || 0);
+        });
+        return groupMap;
+    }
+
+    function getTimelineColor(index) {
+        const palette = [
+            "#4c9ffe",
+            "#ff9f43",
+            "#2ecc71",
+            "#e74c3c",
+            "#9b59b6",
+            "#16a085",
+            "#f1c40f",
+            "#e67e22",
+            "#1abc9c",
+            "#2e86de"
+        ];
+        return palette[index % palette.length];
     }
 
     function normalizePercentage(value) {

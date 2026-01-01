@@ -4,6 +4,10 @@ const STORE_REPORT_DATA = "storeReportData";
 const GET_REPORT_DATA = "getReportData";
 const tabSessionMap = new Map();
 const reportDataStore = new Map();
+const TAB_SESSION_STORAGE_KEY = "tabSessionCache";
+const tabSessionStorage = chrome.storage?.session || chrome.storage?.local;
+
+hydrateTabSessions();
 
 // message handler to retrieve host and session id from Salesforce cookies
 chrome.runtime.onMessage.addListener( ( message, sender, responseCallback ) => {
@@ -25,6 +29,39 @@ chrome.runtime.onMessage.addListener( ( message, sender, responseCallback ) => {
     return false;
 });
 
+
+async function hydrateTabSessions() {
+    if( !tabSessionStorage?.get ) {
+        return;
+    }
+    try {
+        const stored = await tabSessionStorage.get( TAB_SESSION_STORAGE_KEY );
+        const entries = stored?.[ TAB_SESSION_STORAGE_KEY ];
+        if( Array.isArray( entries ) ) {
+            entries.forEach( entry => {
+                if( entry?.tabUrl && entry.domain && entry.session ) {
+                    tabSessionMap.set( entry.tabUrl, { domain: entry.domain, session: entry.session } );
+                }
+            } );
+        }
+    } catch( error ) {
+        console.warn( "Unable to hydrate tab session cache.", error );
+    }
+}
+
+function persistTabSessions() {
+    if( !tabSessionStorage?.set ) {
+        return;
+    }
+    const serialized = Array.from( tabSessionMap.entries() ).map( ( [ tabUrl, sessionInfo ] ) => ( {
+        tabUrl,
+        domain: sessionInfo.domain,
+        session: sessionInfo.session
+    } ) );
+    tabSessionStorage.set( { [ TAB_SESSION_STORAGE_KEY ]: serialized } ).catch( error => {
+        console.warn( "Unable to persist tab session cache.", error );
+    } );
+}
 
 function getHostAndSession( message, sender, responseCallback ) {
     // check cache first and return if found
@@ -69,6 +106,7 @@ function getHostAndSession( message, sender, responseCallback ) {
             let tabUrl = sender?.tab?.url;
             if( tabUrl ) {
                 tabSessionMap.set( tabUrl, { domain: sessionCookie.domain, session: sessionCookie.value } );
+                persistTabSessions();
             }
 
             responseCallback( { domain: sessionCookie.domain 

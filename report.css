@@ -196,3 +196,74 @@ th[data-sort-direction="desc"]::after {
     color: #0a325c;
     text-align: right;
 }
+
+.distribution-timeline {
+    margin: 0.5rem 0 1rem;
+}
+
+.distribution-timeline h4 {
+    margin: 0 0 0.4rem;
+    font-size: 0.95rem;
+    color: #0a325c;
+}
+
+.distribution-timeline table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.9rem;
+}
+
+.distribution-timeline th,
+.distribution-timeline td {
+    border: 1px solid #e1e5ee;
+    padding: 0.5rem 0.6rem;
+    text-align: left;
+}
+
+.distribution-timeline th {
+    background: #f6f8fc;
+    font-weight: 600;
+}
+
+.distribution-timeline__empty {
+    margin: 0.3rem 0 0;
+    font-size: 0.9rem;
+    color: #5f6c80;
+    font-style: italic;
+}
+
+.timeline-chart {
+    margin-bottom: 0.8rem;
+    background: #fff;
+    border: 1px solid #e1e5ee;
+    border-radius: 6px;
+    padding: 0.25rem 0.5rem 0.75rem;
+    width: 100%;
+}
+
+.timeline-chart svg {
+    display: block;
+    width: 100%;
+    height: 260px;
+}
+
+.timeline-chart__legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    font-size: 0.8rem;
+    margin-bottom: 0.4rem;
+}
+
+.timeline-chart__legend-item {
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+}
+
+.timeline-chart__legend-swatch {
+    width: 12px;
+    height: 12px;
+    border-radius: 2px;
+    border: 1px solid rgba(0, 0, 0, 0.1);
+}

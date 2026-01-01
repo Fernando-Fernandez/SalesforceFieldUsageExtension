@@ -724,6 +724,8 @@
                     fieldLabel,
                     recordCount: null,
                     rows: [],
+                    timeline: [],
+                    timelineMessage: "",
                     status: "Skipped: field metadata unavailable."
                 });
                 completed += 1;
@@ -738,6 +740,8 @@
                     fieldLabel,
                     recordCount: null,
                     rows: [],
+                    timeline: [],
+                    timelineMessage: "",
                     status: "Skipped: textarea/address fields cannot be used as filter criteria."
                 });
                 completed += 1;
@@ -747,6 +751,19 @@
             try {
                 const totalRecords = await fetchTotalRecordCount(sobject);
                 const distribution = await fetchFieldDistribution(sobject, field, totalRecords, fieldMeta);
+                let timelineRows = [];
+                let timelineMessage = "";
+                let statusMessage = fieldMeta.groupable ? "Success" : "Success (non-groupable)";
+                try {
+                    timelineRows = await fetchFieldTimeline(sobject, field, fieldMeta);
+                    if (!timelineRows.length) {
+                        timelineMessage = "No activity detected in the last 12 months.";
+                    }
+                } catch (timelineError) {
+                    console.error(`Failed to load timeline for ${sobject}.${field}`, timelineError);
+                    statusMessage = `${statusMessage} | Timeline error: ${timelineError.message || timelineError}`;
+                    timelineMessage = `Timeline unavailable: ${timelineError.message || timelineError}`;
+                }
                 results.push({
                     sobject,
                     sobjectLabel,
@@ -754,7 +771,9 @@
                     fieldLabel,
                     recordCount: totalRecords,
                     rows: distribution.rows,
-                    status: fieldMeta.groupable ? "Success" : "Success (non-groupable)"
+                    timeline: timelineRows,
+                    timelineMessage,
+                    status: statusMessage
                 });
             } catch (error) {
                 console.error(`Failed to process ${sobject}.${field}`, error);
@@ -765,6 +784,8 @@
                     fieldLabel,
                     recordCount: null,
                     rows: [],
+                    timeline: [],
+                    timelineMessage: "",
                     status: `Error: ${error.message || error}`
                 });
             }
@@ -968,6 +989,103 @@
             }
         ].filter((row) => row.count > 0);
         return { rows };
+    }
+
+    async function fetchFieldTimeline(sobject, field, fieldMeta) {
+        if (fieldMeta && !fieldMeta.groupable) {
+            return fetchNonGroupableFieldTimeline(sobject, field);
+        }
+        return fetchGroupableFieldTimeline(sobject, field);
+    }
+
+    async function fetchGroupableFieldTimeline(sobject, field) {
+        const query = `
+            SELECT CALENDAR_YEAR(LastModifiedDate) yearValue,
+                   CALENDAR_MONTH(LastModifiedDate) monthValue,
+                   ${field} fieldValue,
+                   COUNT(Id) cnt
+            FROM ${sobject}
+            WHERE LastModifiedDate >= LAST_N_MONTHS:12
+            GROUP BY CALENDAR_YEAR(LastModifiedDate), CALENDAR_MONTH(LastModifiedDate), ${field}
+            ORDER BY CALENDAR_YEAR(LastModifiedDate), CALENDAR_MONTH(LastModifiedDate), ${field}
+            LIMIT 1000
+        `;
+        const endpoint = `https://${state.host}/services/data/${API_VERSION}/query/?q=${encodeURIComponent(query)}`;
+        const data = await authenticatedFetch(endpoint);
+        const rows = (data.records || [])
+            .map((record) => {
+                const year = Number(record.yearValue ?? record.expr0 ?? 0);
+                const month = Number(record.monthValue ?? record.expr1 ?? 0);
+                const value = record.fieldValue ?? record[field] ?? record.expr2 ?? null;
+                const count = Number(
+                    record.cnt ??
+                    record.expr3 ??
+                    record.expr2 ??
+                    record.expr1 ??
+                    record.expr0 ??
+                    0
+                );
+                return { year, month, value, count };
+            })
+            .filter((row) => Number.isFinite(row.year) && Number.isFinite(row.month) && row.year > 0 && row.month > 0);
+
+        return normalizeTimelineRows(rows);
+    }
+
+    async function fetchNonGroupableFieldTimeline(sobject, field) {
+        const [notNullRows, nullRows] = await Promise.all([
+            fetchTimelineForCondition(sobject, field, "!= null", "NOT NULL"),
+            fetchTimelineForCondition(sobject, field, "= null", "NULL")
+        ]);
+        return normalizeTimelineRows([...notNullRows, ...nullRows]);
+    }
+
+    async function fetchTimelineForCondition(sobject, field, comparator, label) {
+        const query = `
+            SELECT CALENDAR_YEAR(LastModifiedDate) yearValue,
+                   CALENDAR_MONTH(LastModifiedDate) monthValue,
+                   COUNT(Id) cnt
+            FROM ${sobject}
+            WHERE ${field} ${comparator}
+              AND LastModifiedDate >= LAST_N_MONTHS:12
+            GROUP BY CALENDAR_YEAR(LastModifiedDate), CALENDAR_MONTH(LastModifiedDate)
+            ORDER BY CALENDAR_YEAR(LastModifiedDate), CALENDAR_MONTH(LastModifiedDate)
+            LIMIT 1000
+        `;
+        const endpoint = `https://${state.host}/services/data/${API_VERSION}/query/?q=${encodeURIComponent(query)}`;
+        const data = await authenticatedFetch(endpoint);
+        return (data.records || [])
+            .map((record) => ({
+                year: Number(record.yearValue ?? record.expr0 ?? 0),
+                month: Number(record.monthValue ?? record.expr1 ?? 0),
+                value: label,
+                count: Number(record.cnt ?? record.expr2 ?? 0)
+            }))
+            .filter((row) => Number.isFinite(row.year) && Number.isFinite(row.month) && row.year > 0 && row.month > 0);
+    }
+
+    function normalizeTimelineRows(rows = []) {
+        if (!rows.length) {
+            return [];
+        }
+        const totals = new Map();
+        rows.forEach((row) => {
+            const key = `${row.year}-${row.month}`;
+            totals.set(key, (totals.get(key) || 0) + (row.count || 0));
+        });
+        return rows
+            .map((row) => {
+                const key = `${row.year}-${row.month}`;
+                const total = totals.get(key) || 0;
+                return {
+                    year: row.year,
+                    month: row.month,
+                    value: row.value ?? null,
+                    count: row.count || 0,
+                    percentage: total ? (row.count || 0) / total : 0
+                };
+            })
+            .filter((row) => row.count > 0);
     }
 
     function buildSelectionPairs(includeAllWhenEmpty = false, targetSObjects = state.selectedSObjects) {

@@ -64,7 +64,7 @@
       , "type": "module"
     }
 
-    , "permissions": [ "activeTab", "cookies", "scripting", "tabs" ]
+    , "permissions": [ "activeTab", "cookies", "scripting", "tabs", "storage" ]
   
     , "host_permissions": [
       "https://*.salesforce.com/*",
