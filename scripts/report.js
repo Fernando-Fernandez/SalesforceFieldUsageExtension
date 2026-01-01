@@ -610,6 +610,16 @@
         axis.setAttribute("stroke", "#d0d7e5");
         svg.appendChild(axis);
 
+        const axisLabel = document.createElementNS(svg.namespaceURI, "text");
+        axisLabel.textContent = "(log scale)";
+        axisLabel.setAttribute("x", padding.left - 40);
+        axisLabel.setAttribute("y", padding.top + plotHeight / 2);
+        axisLabel.setAttribute("transform", `rotate(-90 ${padding.left - 40} ${padding.top + plotHeight / 2})`);
+        axisLabel.setAttribute("text-anchor", "middle");
+        axisLabel.setAttribute("fill", "#5f6c80");
+        axisLabel.setAttribute("font-size", "11");
+        svg.appendChild(axisLabel);
+
         const groupMap = buildTimelineGroupMap(rows);
 
         periods.forEach((period, periodIndex) => {
@@ -643,12 +653,25 @@
             });
 
             const periodLabel = document.createElementNS(svg.namespaceURI, "text");
-            periodLabel.textContent = period.label;
-            periodLabel.setAttribute("x", padding.left + periodIndex * groupWidth + (values.length * 22) / 2);
+            const labelX = padding.left + periodIndex * groupWidth + (values.length * 22) / 2;
+            periodLabel.setAttribute("x", labelX);
             periodLabel.setAttribute("y", padding.top + plotHeight + 20);
             periodLabel.setAttribute("text-anchor", "middle");
             periodLabel.setAttribute("fill", "#2f3c4d");
             periodLabel.setAttribute("font-size", "11");
+
+            const monthSpan = document.createElementNS(svg.namespaceURI, "tspan");
+            monthSpan.setAttribute("x", labelX);
+            monthSpan.setAttribute("dy", "0");
+            monthSpan.textContent = period.monthLabel || period.label;
+            periodLabel.appendChild(monthSpan);
+
+            const yearSpan = document.createElementNS(svg.namespaceURI, "tspan");
+            yearSpan.setAttribute("x", labelX);
+            yearSpan.setAttribute("dy", "12");
+            yearSpan.textContent = period.yearLabel || "";
+            periodLabel.appendChild(yearSpan);
+
             svg.appendChild(periodLabel);
         });
 
@@ -664,10 +687,13 @@
             }
             const key = `${row.year}-${row.month}`;
             if (!map.has(key)) {
+                const date = new Date(row.year, row.month - 1, 1);
                 map.set(key, {
                     key,
                     sortValue: row.year * 100 + row.month,
-                    label: formatTimelinePeriod(row.year, row.month)
+                    label: formatTimelinePeriod(row.year, row.month),
+                    monthLabel: date.toLocaleString(undefined, { month: "short" }),
+                    yearLabel: date.getFullYear().toString()
                 });
             }
         });

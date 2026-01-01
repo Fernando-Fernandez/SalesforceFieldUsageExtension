@@ -652,6 +652,18 @@
         processStatusEl.textContent = message || "";
     }
 
+    function updateDistributionProgress(fieldCompleted, fieldTotal, timelineCompleted, timelineTotal) {
+        if (!timelineTotal) {
+            setProcessStatus(`Field queries: ${fieldCompleted}/${fieldTotal}`);
+            return;
+        }
+        const parts = [
+            `Field queries: ${fieldCompleted}/${fieldTotal}`,
+            `Timeline queries: ${timelineCompleted}/${timelineTotal}`
+        ];
+        setProcessStatus(parts.join(" | "));
+    }
+
     async function handleProcessSelections() {
         setProcessStatus("");
 
@@ -707,10 +719,12 @@
         }
 
         setStatus("Processing field distributions…", "info");
-        setProcessStatus(`Field queries: 0/${selections.length} completed.`);
+        updateDistributionProgress(0, selections.length, 0, selections.length);
 
         const results = [];
-        let completed = 0;
+        let completedFields = 0;
+        let completedTimelines = 0;
+        const totalSelections = selections.length;
 
         for (const { sobject, field } of selections) {
             const sobjectLabel = getSObjectLabel(sobject);
@@ -728,8 +742,9 @@
                     timelineMessage: "",
                     status: "Skipped: field metadata unavailable."
                 });
-                completed += 1;
-                setProcessStatus(`Field queries: ${completed}/${selections.length} completed.`);
+                completedFields += 1;
+                completedTimelines += 1;
+                updateDistributionProgress(completedFields, totalSelections, completedTimelines, totalSelections);
                 continue;
             }
             if (!isFilterableField(fieldMeta)) {
@@ -744,8 +759,9 @@
                     timelineMessage: "",
                     status: "Skipped: textarea/address fields cannot be used as filter criteria."
                 });
-                completed += 1;
-                setProcessStatus(`Field queries: ${completed}/${selections.length} completed.`);
+                completedFields += 1;
+                completedTimelines += 1;
+                updateDistributionProgress(completedFields, totalSelections, completedTimelines, totalSelections);
                 continue;
             }
             try {
@@ -775,6 +791,7 @@
                     timelineMessage,
                     status: statusMessage
                 });
+                completedTimelines += 1;
             } catch (error) {
                 console.error(`Failed to process ${sobject}.${field}`, error);
                 results.push({
@@ -788,9 +805,10 @@
                     timelineMessage: "",
                     status: `Error: ${error.message || error}`
                 });
+                completedTimelines += 1;
             }
-            completed += 1;
-            setProcessStatus(`Field queries: ${completed}/${selections.length} completed.`);
+            completedFields += 1;
+            updateDistributionProgress(completedFields, totalSelections, completedTimelines, totalSelections);
         }
 
         if (results.length) {
