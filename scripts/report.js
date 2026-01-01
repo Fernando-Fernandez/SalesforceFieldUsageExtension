@@ -8,9 +8,12 @@
     const tableHeaders = Array.from(document.querySelectorAll("th[data-sort-key]"));
     const chartSectionEl = document.getElementById("chartSection");
     const chartContainerEl = document.getElementById("fieldChartContainer");
+    const distributionSectionEl = document.getElementById("distributionSection");
+    const distributionContainerEl = document.getElementById("distributionTables");
 
     const state = {
         results: [],
+        mode: "summary",
         sortKey: null,
         sortDirection: "asc"
     };
@@ -34,9 +37,27 @@
             }
             state.results = reportData.results;
             renderMeta(reportData.generatedAt);
+
+            const hasDistribution = state.results.some((result) => Array.isArray(result.rows));
+            if (hasDistribution) {
+                state.mode = "distribution";
+                renderDistributionTables(state.results);
+                if (chartSectionEl) {
+                    chartSectionEl.hidden = true;
+                }
+                tableSectionEl.hidden = true;
+                return;
+            }
+
+            state.mode = "summary";
+            if (distributionSectionEl) {
+                distributionSectionEl.hidden = true;
+            }
+            if (distributionContainerEl) {
+                distributionContainerEl.innerHTML = "";
+            }
             renderTable(state.results);
             renderBarChart(state.results);
-            setStatus("Report ready.", "info");
             tableSectionEl.hidden = false;
         } catch (error) {
             console.error("Unable to load report", error);
@@ -199,7 +220,10 @@
     }
 
     function renderBarChart(results) {
-        if (!chartSectionEl || !chartContainerEl) {
+        if (!chartSectionEl || !chartContainerEl || state.mode === "distribution") {
+            if (chartSectionEl) {
+                chartSectionEl.hidden = true;
+            }
             return;
         }
         const data = results
@@ -320,6 +344,146 @@
         svg.appendChild(maxLabel);
 
         return svg;
+    }
+
+    function renderDistributionTables(results) {
+        if (!distributionContainerEl) {
+            return;
+        }
+        distributionContainerEl.innerHTML = "";
+        if (!results.length) {
+            if (distributionSectionEl) {
+                distributionSectionEl.hidden = true;
+            }
+            return;
+        }
+
+        if (distributionSectionEl) {
+            distributionSectionEl.hidden = false;
+        }
+
+        results.forEach((result) => {
+            const card = document.createElement("article");
+            card.className = "distribution-card";
+
+            const title = document.createElement("h3");
+            title.textContent = `${result.sobjectLabel || result.sobject} · ${result.fieldLabel || result.field}`;
+            card.appendChild(title);
+
+            const meta = document.createElement("p");
+            meta.className = "distribution-card__meta";
+            meta.textContent = `Record count: ${formatNumber(result.recordCount)} | Status: ${
+                result.status || "Success"
+            }`;
+            card.appendChild(meta);
+
+            const meaningfulRows = Array.isArray(result.rows)
+                ? result.rows.filter((row) => Number(row?.count ?? 0) > 0)
+                : [];
+
+            const chartEl = buildDistributionChart(meaningfulRows);
+            if (chartEl) {
+                card.appendChild(chartEl);
+            }
+
+            const table = document.createElement("table");
+            const thead = document.createElement("thead");
+            thead.innerHTML = `
+                <tr>
+                    <th>SObject</th>
+                    <th>Record Count</th>
+                    <th>Field</th>
+                    <th>Value</th>
+                    <th>Value Count</th>
+                    <th>Percentage</th>
+                </tr>
+            `;
+            table.appendChild(thead);
+
+            const tbody = document.createElement("tbody");
+            if (meaningfulRows.length) {
+                meaningfulRows.forEach((row) => {
+                    const tr = document.createElement("tr");
+                    tr.appendChild(createCell(result.sobjectLabel || result.sobject));
+                    tr.appendChild(createCell(formatNumber(result.recordCount)));
+                    tr.appendChild(createCell(result.fieldLabel || result.field));
+                    tr.appendChild(createCell(formatDistributionValue(row.value)));
+                    tr.appendChild(createCell(formatNumber(row.count)));
+                    tr.appendChild(createCell(formatPercentage(row.percentage)));
+                    tbody.appendChild(tr);
+                });
+            } else {
+                const tr = document.createElement("tr");
+                const td = document.createElement("td");
+                td.colSpan = 6;
+                td.textContent = result.status || "No data returned.";
+                tr.appendChild(td);
+                tbody.appendChild(tr);
+            }
+            table.appendChild(tbody);
+            card.appendChild(table);
+            distributionContainerEl.appendChild(card);
+        });
+    }
+
+    function buildDistributionChart(rows) {
+        if (!Array.isArray(rows) || !rows.length) {
+            return null;
+        }
+        const chart = document.createElement("div");
+        chart.className = "distribution-chart";
+
+        rows.forEach((row) => {
+            const percentageValue = normalizePercentage(row?.percentage);
+            const rowEl = document.createElement("div");
+            rowEl.className = "distribution-chart__row";
+
+            const label = document.createElement("span");
+            label.className = "distribution-chart__label";
+            label.textContent = formatDistributionValue(row?.value);
+            rowEl.appendChild(label);
+
+            const bar = document.createElement("div");
+            bar.className = "distribution-chart__bar";
+            const fill = document.createElement("span");
+            fill.className = "distribution-chart__fill";
+            fill.style.width = `${percentageValue * 100}%`;
+            bar.appendChild(fill);
+            rowEl.appendChild(bar);
+
+            const value = document.createElement("span");
+            value.className = "distribution-chart__value";
+            value.textContent = formatPercentage(percentageValue);
+            rowEl.appendChild(value);
+
+            chart.appendChild(rowEl);
+        });
+
+        return chart;
+    }
+
+    function normalizePercentage(value) {
+        const numericValue = typeof value === "number" ? value : Number(value);
+        if (Number.isNaN(numericValue) || !Number.isFinite(numericValue)) {
+            return 0;
+        }
+        return Math.min(Math.max(numericValue, 0), 1);
+    }
+
+    function formatDistributionValue(value) {
+        if (value === null || value === undefined) {
+            return "NULL";
+        }
+        if (typeof value === "object") {
+            if (value.displayValue) {
+                return value.displayValue;
+            }
+            if (value.value) {
+                return value.value;
+            }
+            return JSON.stringify(value);
+        }
+        return value.toString();
     }
 
     function chunkArray(array, size) {

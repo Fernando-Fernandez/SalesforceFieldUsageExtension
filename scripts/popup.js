@@ -17,6 +17,7 @@
     const removeFieldBtn = document.getElementById("removeFieldBtn");
     const processSelectionsBtn = document.getElementById("processSelectionBtn");
     const processStatusEl = document.getElementById("processStatus");
+    const recordCountCache = new Map();
 
     const state = {
         host: null,
@@ -342,7 +343,8 @@
             .map((field) => ({
                 name: field.name,
                 label: field.label || field.name,
-                type: field.type
+                type: field.type,
+                groupable: !!field.groupable
             }))
             .sort((a, b) => a.label.localeCompare(b.label));
 
@@ -681,6 +683,12 @@
             return;
         }
 
+        const explicitSelections = buildSelectionPairs(false, targetSObjects);
+        if (explicitSelections.length > 0) {
+            await processFieldDistributions(explicitSelections);
+            return;
+        }
+
         const selections = buildSelectionPairs(true, targetSObjects);
         if (!selections.length) {
             setStatus("No fields available to process.", "error");
@@ -688,18 +696,92 @@
             return;
         }
 
-        const totalRequests = selections.filter(({ sobject, field }) => {
-            const meta = getFieldMetadata(sobject, field);
-            return meta && isFilterableField(meta);
-        }).length;
+        await processQueryPlans(selections);
+    }
 
-        setStatus("Processing selections…", "info");
-        if (totalRequests > 0) {
-            setProcessStatus(`Query plans: 0/${totalRequests} completed.`);
-        } else {
-            setProcessStatus("No query-plan API calls expected (all selections skipped).");
+    async function processFieldDistributions(selections) {
+        if (!selections.length) {
+            setStatus("No fields selected for distribution.", "error");
+            setProcessStatus("");
+            return;
         }
 
+        setStatus("Processing field distributions…", "info");
+        setProcessStatus(`Field queries: 0/${selections.length} completed.`);
+
+        const results = [];
+        let completed = 0;
+
+        for (const { sobject, field } of selections) {
+            const sobjectLabel = getSObjectLabel(sobject);
+            const fieldMeta = getFieldMetadata(sobject, field);
+            const fieldLabel = fieldMeta?.label || field;
+            if (!fieldMeta) {
+                results.push({
+                    sobject,
+                    sobjectLabel,
+                    field,
+                    fieldLabel,
+                    recordCount: null,
+                    rows: [],
+                    status: "Skipped: field metadata unavailable."
+                });
+                completed += 1;
+                setProcessStatus(`Field queries: ${completed}/${selections.length} completed.`);
+                continue;
+            }
+            if (!isFilterableField(fieldMeta)) {
+                results.push({
+                    sobject,
+                    sobjectLabel,
+                    field,
+                    fieldLabel,
+                    recordCount: null,
+                    rows: [],
+                    status: "Skipped: textarea/address fields cannot be used as filter criteria."
+                });
+                completed += 1;
+                setProcessStatus(`Field queries: ${completed}/${selections.length} completed.`);
+                continue;
+            }
+            try {
+                const totalRecords = await fetchTotalRecordCount(sobject);
+                const distribution = await fetchFieldDistribution(sobject, field, totalRecords, fieldMeta);
+                results.push({
+                    sobject,
+                    sobjectLabel,
+                    field,
+                    fieldLabel,
+                    recordCount: totalRecords,
+                    rows: distribution.rows,
+                    status: fieldMeta.groupable ? "Success" : "Success (non-groupable)"
+                });
+            } catch (error) {
+                console.error(`Failed to process ${sobject}.${field}`, error);
+                results.push({
+                    sobject,
+                    sobjectLabel,
+                    field,
+                    fieldLabel,
+                    recordCount: null,
+                    rows: [],
+                    status: `Error: ${error.message || error}`
+                });
+            }
+            completed += 1;
+            setProcessStatus(`Field queries: ${completed}/${selections.length} completed.`);
+        }
+
+        if (results.length) {
+            openResultsTab(results);
+            setStatus(`Processed ${results.length} field(s).`, "success");
+        } else {
+            setStatus("No results to display.", "error");
+            setProcessStatus("");
+        }
+    }
+
+    async function processQueryPlans(selections) {
         const selectionDetails = selections.map(({ sobject, field }) => {
             const meta = getFieldMetadata(sobject, field);
             return {
@@ -744,6 +826,14 @@
         const requestableDetails = selectionDetails.filter(
             (detail) => detail.metadata && isFilterableField(detail.metadata)
         );
+
+        const totalRequests = requestableDetails.length;
+        setStatus("Processing selections…", "info");
+        if (totalRequests > 0) {
+            setProcessStatus(`Query plans: 0/${totalRequests} completed.`);
+        } else {
+            setProcessStatus("No query-plan API calls expected (all selections skipped).");
+        }
 
         for (const chunk of chunkArray(requestableDetails, 5)) {
             let batchResult;
@@ -825,6 +915,59 @@
             setStatus("No results to display.", "error");
             setProcessStatus("");
         }
+    }
+
+    async function fetchTotalRecordCount(sobject) {
+        if (recordCountCache.has(sobject)) {
+            return recordCountCache.get(sobject);
+        }
+        const query = `SELECT COUNT() FROM ${sobject}`;
+        const endpoint = `https://${state.host}/services/data/${API_VERSION}/query/?q=${encodeURIComponent(query)}`;
+        const data = await authenticatedFetch(endpoint);
+        const total = typeof data.totalSize === "number" ? data.totalSize : 0;
+        recordCountCache.set(sobject, total);
+        return total;
+    }
+
+    async function fetchFieldDistribution(sobject, field, totalRecords, fieldMeta) {
+        if (fieldMeta && !fieldMeta.groupable) {
+            return fetchNonGroupableDistribution(sobject, field, totalRecords);
+        }
+        const query = `SELECT ${field}, COUNT(Id) cnt FROM ${sobject} GROUP BY ${field} ORDER BY COUNT(Id) DESC LIMIT 100`;
+        const endpoint = `https://${state.host}/services/data/${API_VERSION}/query/?q=${encodeURIComponent(query)}`;
+        const data = await authenticatedFetch(endpoint);
+        const rows = (data.records || [])
+            .map((record) => {
+                const count = Number(record.cnt ?? record.expr0 ?? 0);
+                return {
+                    value: record[field] ?? null,
+                    count,
+                    percentage: totalRecords ? count / totalRecords : 0
+                };
+            })
+            .filter((row) => row.count > 0);
+        return { rows };
+    }
+
+    async function fetchNonGroupableDistribution(sobject, field, totalRecords) {
+        const nullQuery = `SELECT COUNT(Id) cnt FROM ${sobject} WHERE ${field} = null`;
+        const endpoint = `https://${state.host}/services/data/${API_VERSION}/query/?q=${encodeURIComponent(nullQuery)}`;
+        const data = await authenticatedFetch(endpoint);
+        const nullCount = Number(data.records?.[0]?.cnt ?? data.expr0 ?? data.totalSize ?? 0);
+        const notNullCount = Math.max((totalRecords ?? 0) - nullCount, 0);
+        const rows = [
+            {
+                value: "NOT NULL",
+                count: notNullCount,
+                percentage: totalRecords ? notNullCount / totalRecords : 0
+            },
+            {
+                value: "NULL",
+                count: nullCount,
+                percentage: totalRecords ? nullCount / totalRecords : 0
+            }
+        ].filter((row) => row.count > 0);
+        return { rows };
     }
 
     function buildSelectionPairs(includeAllWhenEmpty = false, targetSObjects = state.selectedSObjects) {

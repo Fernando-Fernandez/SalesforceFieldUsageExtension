@@ -107,3 +107,92 @@ th[data-sort-direction="asc"]::after {
 th[data-sort-direction="desc"]::after {
     content: "▼";
 }
+
+#distributionSection {
+    margin-top: 1.5rem;
+}
+
+.distribution-card {
+    background: #fff;
+    border-radius: 8px;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+    padding: 1rem;
+    margin-bottom: 1.5rem;
+}
+
+.distribution-card h3 {
+    margin: 0 0 0.25rem;
+    font-size: 1.1rem;
+}
+
+.distribution-card__meta {
+    font-size: 0.9rem;
+    color: #5f6c80;
+    margin: 0 0 0.75rem;
+}
+
+.distribution-card table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.distribution-card th,
+.distribution-card td {
+    border: 1px solid #e1e5ee;
+    padding: 0.6rem 0.8rem;
+    font-size: 0.95rem;
+    text-align: left;
+}
+
+.distribution-card th {
+    background: #eef4ff;
+    font-weight: 600;
+}
+
+.distribution-chart {
+    margin: 0 0 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+}
+
+.distribution-chart__row {
+    display: grid;
+    grid-template-columns: 190px 1fr 70px;
+    align-items: center;
+    gap: 0.75rem;
+}
+
+.distribution-chart__label {
+    font-size: 0.85rem;
+    color: #364152;
+    word-break: break-word;
+}
+
+.distribution-chart__bar {
+    background: #edf1f7;
+    border-radius: 999px;
+    overflow: hidden;
+    height: 18px;
+}
+
+.distribution-chart__fill {
+    display: block;
+    height: 100%;
+    background: linear-gradient(90deg, #4c9ffe, #0a7fd6);
+    border-radius: 999px;
+}
+@media print { 
+    .distribution-chart__fill { 
+        print-color-adjust: exact; 
+        -webkit-print-color-adjust: exact; 
+        background: #4c9ffe; 
+    } 
+}
+
+.distribution-chart__value {
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: #0a325c;
+    text-align: right;
+}
