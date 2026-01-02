@@ -112,6 +112,10 @@ th[data-sort-direction="desc"]::after {
     margin-top: 1.5rem;
 }
 
+#summaryTimelineSection {
+    margin-top: 1.5rem;
+}
+
 .distribution-card {
     background: #fff;
     border-radius: 8px;

@@ -10,9 +10,12 @@
     const chartContainerEl = document.getElementById("fieldChartContainer");
     const distributionSectionEl = document.getElementById("distributionSection");
     const distributionContainerEl = document.getElementById("distributionTables");
+    const summaryTimelineSectionEl = document.getElementById("summaryTimelineSection");
+    const summaryTimelineContainerEl = document.getElementById("summaryTimelineCards");
 
     const state = {
         results: [],
+        summaryTimeline: [],
         mode: "summary",
         sortKey: null,
         sortDirection: "asc"
@@ -36,6 +39,7 @@
                 return;
             }
             state.results = reportData.results;
+            state.summaryTimeline = Array.isArray(reportData.summaryTimeline) ? reportData.summaryTimeline : [];
             renderMeta(reportData.generatedAt);
 
             const hasDistribution = state.results.some((result) => Array.isArray(result.rows));
@@ -44,6 +48,12 @@
                 renderDistributionTables(state.results);
                 if (chartSectionEl) {
                     chartSectionEl.hidden = true;
+                }
+                if (summaryTimelineSectionEl) {
+                    summaryTimelineSectionEl.hidden = true;
+                }
+                if (summaryTimelineContainerEl) {
+                    summaryTimelineContainerEl.innerHTML = "";
                 }
                 tableSectionEl.hidden = true;
                 clearStatus();
@@ -59,6 +69,7 @@
             }
             renderTable(state.results);
             renderBarChart(state.results);
+            renderSummaryTimelines(state.summaryTimeline);
             clearStatus();
             tableSectionEl.hidden = false;
         } catch (error) {
@@ -482,6 +493,36 @@
         });
 
         return chart;
+    }
+
+    function renderSummaryTimelines(timelines) {
+        if (!summaryTimelineContainerEl) {
+            return;
+        }
+        summaryTimelineContainerEl.innerHTML = "";
+        if (!Array.isArray(timelines) || !timelines.length) {
+            if (summaryTimelineSectionEl) {
+                summaryTimelineSectionEl.hidden = true;
+            }
+            return;
+        }
+        if (summaryTimelineSectionEl) {
+            summaryTimelineSectionEl.hidden = false;
+        }
+        timelines.forEach((item) => {
+            const card = document.createElement("article");
+            card.className = "distribution-card";
+
+            const title = document.createElement("h3");
+            title.textContent = item.sobjectLabel || item.sobject;
+            card.appendChild(title);
+
+            const timelineEl = buildTimelineSection(item.rows || [], item.timelineMessage);
+            if (timelineEl) {
+                card.appendChild(timelineEl);
+            }
+            summaryTimelineContainerEl.appendChild(card);
+        });
     }
 
     function buildTimelineSection(rows, message) {

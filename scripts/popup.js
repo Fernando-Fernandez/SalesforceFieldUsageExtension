@@ -592,11 +592,14 @@
         return `report-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     }
 
-    function storeReportData(results) {
+    function storeReportData(data) {
+        if (!data || !Array.isArray(data.results)) {
+            throw new Error("Invalid report payload.");
+        }
         const payload = {
             reportId: generateReportId(),
             generatedAt: Date.now(),
-            results
+            ...data
         };
         return new Promise((resolve, reject) => {
             chrome.runtime.sendMessage(
@@ -616,9 +619,9 @@
         });
     }
 
-    async function openResultsTab(results) {
+    async function openResultsTab(reportData) {
         try {
-            const reportId = await storeReportData(results);
+            const reportId = await storeReportData(reportData);
             const reportUrl = chrome.runtime.getURL(`report.html?reportId=${reportId}`);
             chrome.tabs.create({ url: reportUrl });
         } catch (error) {
@@ -708,7 +711,8 @@
             return;
         }
 
-        await processQueryPlans(selections);
+        const includeTimeline = explicitSelections.length === 0;
+        await processQueryPlans(selections, { timelineSObjects: includeTimeline ? targetSObjects : [] });
     }
 
     async function processFieldDistributions(selections) {
@@ -812,7 +816,7 @@
         }
 
         if (results.length) {
-            openResultsTab(results);
+            openResultsTab({ results });
             setStatus(`Processed ${results.length} field(s).`, "success");
         } else {
             setStatus("No results to display.", "error");
@@ -820,7 +824,10 @@
         }
     }
 
-    async function processQueryPlans(selections) {
+    async function processQueryPlans(selections, options = {}) {
+        const timelineSObjects = Array.isArray(options.timelineSObjects)
+            ? Array.from(new Set(options.timelineSObjects))
+            : [];
         const selectionDetails = selections.map(({ sobject, field }) => {
             const meta = getFieldMetadata(sobject, field);
             return {
@@ -835,6 +842,7 @@
 
         const results = [];
         let completedRequests = 0;
+        let summaryTimeline = [];
 
         selectionDetails.forEach((detail) => {
             if (!detail.metadata) {
@@ -942,14 +950,24 @@
             });
         }
 
+        if (timelineSObjects.length) {
+            setStatus("Processing SObject timelines…", "info");
+            summaryTimeline = await fetchSObjectTimelines(timelineSObjects, (completed, total) => {
+                setProcessStatus(`Timeline queries: ${completed}/${total} completed.`);
+            });
+        }
+
         if (results.length) {
-            openResultsTab(results);
+            openResultsTab({ results, summaryTimeline });
             setStatus(`Processed ${results.length} field(s).`, "success");
-            if (totalRequests > 0) {
-                setProcessStatus(`Completed ${completedRequests}/${totalRequests} API calls.`);
-            } else {
-                setProcessStatus("Completed with skipped fields only.");
-            }
+            const summaryMessage =
+                totalRequests > 0
+                    ? `Query plans completed: ${completedRequests}/${totalRequests}.`
+                    : "Completed with skipped fields only.";
+            const timelineMessage = timelineSObjects.length
+                ? ` Timeline queries: ${summaryTimeline.length}/${timelineSObjects.length}.`
+                : "";
+            setProcessStatus(`${summaryMessage}${timelineMessage}`);
         } else {
             setStatus("No results to display.", "error");
             setProcessStatus("");
@@ -1014,6 +1032,61 @@
             return fetchNonGroupableFieldTimeline(sobject, field);
         }
         return fetchGroupableFieldTimeline(sobject, field);
+    }
+
+    async function fetchSObjectTimelines(sobjects, progressCallback) {
+        if (!Array.isArray(sobjects) || !sobjects.length) {
+            return [];
+        }
+        const uniqueSObjects = Array.from(new Set(sobjects));
+        const timelines = [];
+        let completed = 0;
+        for (const sobject of uniqueSObjects) {
+            let rows = [];
+            let timelineMessage = "";
+            try {
+                rows = await fetchSObjectTimeline(sobject);
+                if (!rows.length) {
+                    timelineMessage = "No modifications detected in the last 12 months.";
+                }
+            } catch (error) {
+                timelineMessage = `Timeline error: ${error.message || error}`;
+            }
+            timelines.push({
+                sobject,
+                sobjectLabel: getSObjectLabel(sobject),
+                rows,
+                timelineMessage
+            });
+            completed += 1;
+            progressCallback?.(completed, uniqueSObjects.length);
+        }
+        return timelines;
+    }
+
+    async function fetchSObjectTimeline(sobject) {
+        const query = `
+            SELECT CALENDAR_YEAR(LastModifiedDate) yearValue,
+                   CALENDAR_MONTH(LastModifiedDate) monthValue,
+                   COUNT(Id) cnt
+            FROM ${sobject}
+            WHERE LastModifiedDate >= LAST_N_MONTHS:12
+            GROUP BY CALENDAR_YEAR(LastModifiedDate), CALENDAR_MONTH(LastModifiedDate)
+            ORDER BY CALENDAR_YEAR(LastModifiedDate), CALENDAR_MONTH(LastModifiedDate)
+            LIMIT 1000
+        `;
+        const endpoint = `https://${state.host}/services/data/${API_VERSION}/query/?q=${encodeURIComponent(query)}`;
+        const data = await authenticatedFetch(endpoint);
+        const rows = (data.records || [])
+            .map((record) => ({
+                year: Number(record.yearValue ?? record.expr0 ?? 0),
+                month: Number(record.monthValue ?? record.expr1 ?? 0),
+                value: "Records",
+                count: Number(record.cnt ?? record.expr2 ?? record.expr0 ?? 0)
+            }))
+            .filter((row) => Number.isFinite(row.year) && Number.isFinite(row.month) && row.year > 0 && row.month > 0);
+
+        return normalizeTimelineRows(rows);
     }
 
     async function fetchGroupableFieldTimeline(sobject, field) {
