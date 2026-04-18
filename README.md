@@ -6,6 +6,7 @@ This browser extension helps Salesforce administrators understand how their org 
 - **Field usage verification** - Runs targeted SOQL queries, inspects returned records, and reports the percentage of `NULL` values to highlight unused or underused fields.
 - **Distinct value profiling** - Counts unique values within a field to reveal whether a single value dominates (indicating inaccurate user input) or whether the distribution reflects healthy usage.
 - **Monthly trend analysis** - Aggregates records by month for each field value so admins can spot adoption trends, seasonal anomalies, and newly inactive data. The report renders both tables and log-scale charts with monthly bars broken down by value.
+- **Reference analysis** - For custom fields, queries the Tooling API's `MetadataComponentDependency` to list every Apex class/trigger, Flow, Layout, Report, Validation Rule, and other metadata component that references the field. Each referencing component appears with a deep link into Setup so you can jump straight to it before deciding whether a field is safe to retire.
 
 Use these insights to decide which fields can be deprecated, which require user training, and where data validation rules might be missing.
 

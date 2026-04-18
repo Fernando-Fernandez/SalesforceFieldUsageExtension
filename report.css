@@ -236,6 +236,85 @@ th[data-sort-direction="desc"]::after {
     font-style: italic;
 }
 
+.distribution-references {
+    margin: 0.75rem 0 0;
+    padding-top: 0.75rem;
+    border-top: 1px dashed #d0d7e5;
+}
+
+.distribution-references h4 {
+    margin: 0 0 0.4rem;
+    font-size: 0.95rem;
+    color: #0a325c;
+}
+
+.distribution-references__summary {
+    margin: 0 0 0.5rem;
+    font-size: 0.9rem;
+    color: #364152;
+}
+
+.distribution-references__note {
+    margin: 0;
+    font-size: 0.9rem;
+    color: #5f6c80;
+    font-style: italic;
+}
+
+.distribution-references__list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: 0.3rem 0.75rem;
+}
+
+.distribution-references__list li {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    font-size: 0.88rem;
+    color: #1f2a44;
+}
+
+.distribution-references__type {
+    flex: 0 0 auto;
+    background: #eef4ff;
+    color: #2c3e94;
+    border-radius: 4px;
+    padding: 0.12rem 0.4rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+}
+
+.distribution-references__list a {
+    color: #0a7fd6;
+    text-decoration: none;
+    word-break: break-word;
+}
+
+.distribution-references__list a:hover {
+    text-decoration: underline;
+}
+
+.references-cell__total {
+    font-weight: 600;
+    color: #0a325c;
+}
+
+.references-cell__detail {
+    color: #5f6c80;
+    font-size: 0.85rem;
+}
+
+.references-cell__note {
+    color: #5f6c80;
+    font-style: italic;
+    font-size: 0.85rem;
+}
+
 .timeline-chart {
     margin-bottom: 0.8rem;
     background: #fff;
