@@ -18,7 +18,8 @@
         summaryTimeline: [],
         mode: "summary",
         sortKey: null,
-        sortDirection: "asc"
+        sortDirection: "asc",
+        salesforceHost: null
     };
 
     document.addEventListener("DOMContentLoaded", init);
@@ -40,6 +41,7 @@
             }
             state.results = reportData.results;
             state.summaryTimeline = Array.isArray(reportData.summaryTimeline) ? reportData.summaryTimeline : [];
+            state.salesforceHost = normalizeHost(reportData.salesforceHost);
             renderMeta(reportData.generatedAt);
 
             const hasDistribution = state.results.some((result) => Array.isArray(result.rows));
@@ -121,6 +123,7 @@
             row.appendChild(createCell(formatNumber(result.sobjectCount)));
             row.appendChild(createCell(formatNumber(result.nonNullCount)));
             row.appendChild(createCell(formatPercentage(result.nonNullPercentage)));
+            row.appendChild(buildReferencesCell(result.references));
             row.appendChild(createCell(result.status));
             tableBodyEl.appendChild(row);
         });
@@ -130,6 +133,59 @@
         const cell = document.createElement("td");
         cell.textContent = text ?? "—";
         return cell;
+    }
+
+    function buildReferencesCell(references) {
+        const cell = document.createElement("td");
+        cell.className = "references-cell";
+        if (!references) {
+            cell.textContent = "—";
+            return cell;
+        }
+        if (typeof references.total === "number") {
+            const total = document.createElement("span");
+            total.className = "references-cell__total";
+            total.textContent = formatNumber(references.total);
+            cell.appendChild(total);
+            const summary = formatReferenceTypeSummary(references.byType);
+            if (summary) {
+                const detail = document.createElement("span");
+                detail.className = "references-cell__detail";
+                detail.textContent = ` (${summary})`;
+                cell.appendChild(detail);
+            }
+            return cell;
+        }
+        cell.textContent = references.status || "—";
+        cell.classList.add("references-cell__note");
+        return cell;
+    }
+
+    function formatReferenceTypeSummary(byType) {
+        if (!byType || typeof byType !== "object") {
+            return "";
+        }
+        const entries = Object.entries(byType)
+            .filter(([, count]) => typeof count === "number" && count > 0)
+            .sort((a, b) => b[1] - a[1]);
+        if (!entries.length) {
+            return "";
+        }
+        const visible = entries.slice(0, 3).map(([type, count]) => `${count} ${humanizeType(type)}`);
+        const remaining = entries.slice(3).reduce((sum, [, count]) => sum + count, 0);
+        if (remaining > 0) {
+            visible.push(`${remaining} other`);
+        }
+        return visible.join(", ");
+    }
+
+    function humanizeType(type) {
+        if (!type) {
+            return "Unknown";
+        }
+        return type
+            .replace(/([a-z])([A-Z])/g, "$1 $2")
+            .replace(/^./, (ch) => ch.toUpperCase());
     }
 
     function setStatus(message, type) {
@@ -235,6 +291,8 @@
                 return result.nonNullCount;
             case "nonNullPercentage":
                 return result.nonNullPercentage;
+            case "references":
+                return typeof result.references?.total === "number" ? result.references.total : null;
             case "status":
                 return result.status;
             default:
@@ -455,8 +513,122 @@
                 card.appendChild(timelineEl);
             }
 
+            const referencesEl = buildReferencesSection(result);
+            if (referencesEl) {
+                card.appendChild(referencesEl);
+            }
+
             distributionContainerEl.appendChild(card);
         });
+    }
+
+    function buildReferencesSection(result) {
+        const references = result?.references;
+        if (!references) {
+            return null;
+        }
+        const container = document.createElement("div");
+        container.className = "distribution-references";
+
+        const title = document.createElement("h4");
+        title.textContent = "References (MetadataComponentDependency)";
+        container.appendChild(title);
+
+        if (typeof references.total !== "number") {
+            const note = document.createElement("p");
+            note.className = "distribution-references__note";
+            note.textContent = references.status || "References not analyzed.";
+            container.appendChild(note);
+            return container;
+        }
+
+        const summary = document.createElement("p");
+        summary.className = "distribution-references__summary";
+        const typeSummary = formatReferenceTypeSummary(references.byType);
+        summary.textContent = references.total === 0
+            ? "No references found via MetadataComponentDependency."
+            : `${formatNumber(references.total)} reference${references.total === 1 ? "" : "s"}${
+                typeSummary ? ` · ${typeSummary}` : ""
+            }`;
+        container.appendChild(summary);
+
+        if (!Array.isArray(references.items) || !references.items.length) {
+            return container;
+        }
+
+        const list = document.createElement("ul");
+        list.className = "distribution-references__list";
+        references.items.forEach((item) => {
+            const li = document.createElement("li");
+            const typeBadge = document.createElement("span");
+            typeBadge.className = "distribution-references__type";
+            typeBadge.textContent = humanizeType(item.type);
+            li.appendChild(typeBadge);
+
+            const nameEl = buildReferenceNameElement(item);
+            li.appendChild(nameEl);
+            list.appendChild(li);
+        });
+        container.appendChild(list);
+        return container;
+    }
+
+    function buildReferenceNameElement(item) {
+        const name = item?.name || item?.id || "Unknown component";
+        if (!item?.id) {
+            const span = document.createElement("span");
+            span.textContent = name;
+            return span;
+        }
+        const host = state.salesforceHost;
+        if (!host) {
+            const span = document.createElement("span");
+            span.textContent = name;
+            return span;
+        }
+        const link = document.createElement("a");
+        link.href = buildComponentLink(host, item);
+        link.target = "_blank";
+        link.rel = "noopener noreferrer";
+        link.textContent = name;
+        return link;
+    }
+
+    function normalizeHost(host) {
+        if (!host || typeof host !== "string") {
+            return null;
+        }
+        return host.startsWith(".") ? host.substring(1) : host;
+    }
+
+    function buildComponentLink(host, item) {
+        const base = `https://${host}`;
+        const id = encodeURIComponent(item.id);
+        switch (item.type) {
+            case "ApexClass":
+                return `${base}/lightning/setup/ApexClasses/page?address=%2F${id}`;
+            case "ApexTrigger":
+                return `${base}/lightning/setup/ApexTriggers/page?address=%2F${id}`;
+            case "ApexPage":
+                return `${base}/lightning/setup/ApexPages/page?address=%2F${id}`;
+            case "Flow":
+            case "FlowDefinition":
+                return `${base}/lightning/setup/Flows/page?address=%2F${id}`;
+            case "Layout":
+                return `${base}/lightning/setup/ObjectManager/home`;
+            case "ValidationRule":
+                return `${base}/lightning/setup/ObjectManager/home`;
+            case "Report":
+                return `${base}/lightning/r/Report/${id}/view`;
+            case "Dashboard":
+                return `${base}/lightning/r/Dashboard/${id}/view`;
+            case "FlexiPage":
+                return `${base}/lightning/setup/FlexiPageList/page?address=%2F${id}`;
+            case "EmailTemplate":
+                return `${base}/lightning/setup/CommunicationTemplatesEmail/page?address=%2F${id}`;
+            default:
+                return `${base}/${id}`;
+        }
     }
 
     function buildDistributionChart(rows) {

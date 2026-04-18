@@ -816,7 +816,8 @@
         }
 
         if (results.length) {
-            openResultsTab({ results });
+            await runReferenceAnalysis(results);
+            openResultsTab({ results, salesforceHost: state.host });
             setStatus(`Processed ${results.length} field(s).`, "success");
         } else {
             setStatus("No results to display.", "error");
@@ -958,7 +959,8 @@
         }
 
         if (results.length) {
-            openResultsTab({ results, summaryTimeline });
+            const referenceSummary = await runReferenceAnalysis(results);
+            openResultsTab({ results, summaryTimeline, salesforceHost: state.host });
             setStatus(`Processed ${results.length} field(s).`, "success");
             const summaryMessage =
                 totalRequests > 0
@@ -967,7 +969,7 @@
             const timelineMessage = timelineSObjects.length
                 ? ` Timeline queries: ${summaryTimeline.length}/${timelineSObjects.length}.`
                 : "";
-            setProcessStatus(`${summaryMessage}${timelineMessage}`);
+            setProcessStatus(`${summaryMessage}${timelineMessage}${referenceSummary}`);
         } else {
             setStatus("No results to display.", "error");
             setProcessStatus("");
@@ -984,6 +986,228 @@
         const total = typeof data.totalSize === "number" ? data.totalSize : 0;
         recordCountCache.set(sobject, total);
         return total;
+    }
+
+    // -----------------------------
+    // Field references (MetadataComponentDependency)
+    // -----------------------------
+    async function runReferenceAnalysis(results) {
+        try {
+            const eligibleCount = results.filter((r) => isCustomFieldApiName(r?.field)).length;
+            if (!eligibleCount) {
+                return "";
+            }
+            setStatus("Analyzing field references…", "info");
+            let lastText = "";
+            await attachFieldReferences(results, (completed, total) => {
+                lastText = `References: ${completed}/${total} analyzed.`;
+                setProcessStatus(lastText);
+            });
+            return lastText ? ` ${lastText}` : "";
+        } catch (error) {
+            console.error("Unable to analyze field references", error);
+            return ` References unavailable: ${error.message || error}`;
+        }
+    }
+
+
+    // Populates `result.references` on each entry of `results`. For custom fields,
+    // we resolve the CustomField Id via Tooling API and then query
+    // MetadataComponentDependency for all components that reference the field
+    // (Apex, Flow, Layout, Report, Validation Rule, etc.). Standard fields and
+    // orgs where the dependency API is unavailable are surfaced via status text.
+    async function attachFieldReferences(results, progressCallback) {
+        if (!Array.isArray(results) || !results.length) {
+            return;
+        }
+
+        const byObject = new Map();
+        results.forEach((result) => {
+            const fieldName = result?.field;
+            if (!fieldName) {
+                result.references = buildReferencePayload("Skipped: field name unavailable.");
+                return;
+            }
+            if (!isCustomFieldApiName(fieldName)) {
+                result.references = buildReferencePayload(
+                    "Not supported: MetadataComponentDependency only tracks custom fields."
+                );
+                return;
+            }
+            if (!byObject.has(result.sobject)) {
+                byObject.set(result.sobject, []);
+            }
+            byObject.get(result.sobject).push(result);
+        });
+
+        const eligibleResults = [];
+        byObject.forEach((group) => eligibleResults.push(...group));
+        if (!eligibleResults.length) {
+            return;
+        }
+
+        const totalEligible = eligibleResults.length;
+        let completed = 0;
+        const reportProgress = () => {
+            if (typeof progressCallback === "function") {
+                progressCallback(completed, totalEligible);
+            }
+        };
+        reportProgress();
+
+        for (const [sobject, group] of byObject.entries()) {
+            try {
+                const idByField = await fetchCustomFieldIds(sobject, group.map((r) => r.field));
+                const missingIds = group.filter((r) => !idByField.has(r.field));
+                missingIds.forEach((r) => {
+                    r.references = buildReferencePayload("Not found in Tooling API (CustomField).");
+                });
+
+                const resolved = group.filter((r) => idByField.has(r.field));
+                if (!resolved.length) {
+                    completed += group.length;
+                    reportProgress();
+                    continue;
+                }
+
+                const depsById = await fetchDependenciesByRefIds(
+                    resolved.map((r) => idByField.get(r.field))
+                );
+
+                resolved.forEach((r) => {
+                    const deps = depsById.get(idByField.get(r.field)) || [];
+                    r.references = summarizeDependencies(deps);
+                });
+                completed += group.length;
+                reportProgress();
+            } catch (error) {
+                console.error(`Failed to load references for ${sobject}`, error);
+                group.forEach((r) => {
+                    if (!r.references) {
+                        r.references = buildReferencePayload(`Error: ${error.message || error}`);
+                    }
+                });
+                completed += group.length;
+                reportProgress();
+            }
+        }
+    }
+
+    function isCustomFieldApiName(fieldApiName) {
+        return typeof fieldApiName === "string" && fieldApiName.endsWith("__c");
+    }
+
+    function toCustomFieldDeveloperName(fieldApiName) {
+        return fieldApiName.endsWith("__c") ? fieldApiName.slice(0, -3) : fieldApiName;
+    }
+
+    function soqlStringLiteral(value) {
+        return `'${String(value).replace(/\\/g, "\\\\").replace(/'/g, "\\'")}'`;
+    }
+
+    function buildReferencePayload(statusMessage) {
+        return {
+            status: statusMessage,
+            total: null,
+            byType: {},
+            items: []
+        };
+    }
+
+    async function fetchCustomFieldIds(sobject, fieldApiNames) {
+        const idByField = new Map();
+        const pairs = fieldApiNames.map((apiName) => ({
+            apiName,
+            developerName: toCustomFieldDeveloperName(apiName)
+        }));
+        const developerNames = pairs.map((p) => p.developerName);
+        const uniqueDeveloperNames = Array.from(new Set(developerNames));
+
+        for (const chunk of chunkArray(uniqueDeveloperNames, 100)) {
+            const inClause = chunk.map(soqlStringLiteral).join(",");
+            const query =
+                `SELECT Id, DeveloperName FROM CustomField ` +
+                `WHERE EntityDefinition.QualifiedApiName = ${soqlStringLiteral(sobject)} ` +
+                `AND DeveloperName IN (${inClause})`;
+            const endpoint =
+                `https://${state.host}/services/data/${API_VERSION}/tooling/query/?q=${encodeURIComponent(query)}`;
+            const data = await authenticatedFetch(endpoint);
+            (data.records || []).forEach((record) => {
+                if (!record || !record.Id || !record.DeveloperName) {
+                    return;
+                }
+                const match = pairs.find((p) => p.developerName === record.DeveloperName);
+                if (match) {
+                    idByField.set(match.apiName, record.Id);
+                }
+            });
+        }
+
+        return idByField;
+    }
+
+    async function fetchDependenciesByRefIds(customFieldIds) {
+        const depsById = new Map();
+        const uniqueIds = Array.from(new Set(customFieldIds.filter(Boolean)));
+
+        for (const chunk of chunkArray(uniqueIds, 50)) {
+            const inClause = chunk.map(soqlStringLiteral).join(",");
+            const query =
+                `SELECT RefMetadataComponentId, MetadataComponentId, ` +
+                `MetadataComponentName, MetadataComponentType ` +
+                `FROM MetadataComponentDependency ` +
+                `WHERE RefMetadataComponentType = 'CustomField' ` +
+                `AND RefMetadataComponentId IN (${inClause})`;
+            const endpoint =
+                `https://${state.host}/services/data/${API_VERSION}/tooling/query/?q=${encodeURIComponent(query)}`;
+            const data = await authenticatedFetch(endpoint);
+            (data.records || []).forEach((record) => {
+                if (!record || !record.RefMetadataComponentId) {
+                    return;
+                }
+                if (!depsById.has(record.RefMetadataComponentId)) {
+                    depsById.set(record.RefMetadataComponentId, []);
+                }
+                depsById.get(record.RefMetadataComponentId).push({
+                    id: record.MetadataComponentId,
+                    name: record.MetadataComponentName,
+                    type: record.MetadataComponentType
+                });
+            });
+        }
+
+        return depsById;
+    }
+
+    function summarizeDependencies(dependencies) {
+        if (!Array.isArray(dependencies) || !dependencies.length) {
+            return {
+                status: "No references found.",
+                total: 0,
+                byType: {},
+                items: []
+            };
+        }
+        const byType = {};
+        const items = [];
+        dependencies.forEach((dep) => {
+            const type = dep.type || "Unknown";
+            byType[type] = (byType[type] || 0) + 1;
+            items.push({ id: dep.id, name: dep.name, type });
+        });
+        items.sort((a, b) => {
+            const typeCompare = (a.type || "").localeCompare(b.type || "");
+            if (typeCompare !== 0) {
+                return typeCompare;
+            }
+            return (a.name || "").localeCompare(b.name || "");
+        });
+        return {
+            status: "Success",
+            total: dependencies.length,
+            byType,
+            items
+        };
     }
 
     async function fetchFieldDistribution(sobject, field, totalRecords, fieldMeta) {
