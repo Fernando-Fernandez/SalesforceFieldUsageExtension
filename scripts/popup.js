@@ -817,7 +817,7 @@
 
         if (results.length) {
             await runReferenceAnalysis(results);
-            openResultsTab({ results });
+            openResultsTab({ results, salesforceHost: state.host });
             setStatus(`Processed ${results.length} field(s).`, "success");
         } else {
             setStatus("No results to display.", "error");
@@ -960,7 +960,7 @@
 
         if (results.length) {
             const referenceSummary = await runReferenceAnalysis(results);
-            openResultsTab({ results, summaryTimeline });
+            openResultsTab({ results, summaryTimeline, salesforceHost: state.host });
             setStatus(`Processed ${results.length} field(s).`, "success");
             const summaryMessage =
                 totalRequests > 0

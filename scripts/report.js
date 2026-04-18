@@ -18,7 +18,8 @@
         summaryTimeline: [],
         mode: "summary",
         sortKey: null,
-        sortDirection: "asc"
+        sortDirection: "asc",
+        salesforceHost: null
     };
 
     document.addEventListener("DOMContentLoaded", init);
@@ -40,6 +41,7 @@
             }
             state.results = reportData.results;
             state.summaryTimeline = Array.isArray(reportData.summaryTimeline) ? reportData.summaryTimeline : [];
+            state.salesforceHost = normalizeHost(reportData.salesforceHost);
             renderMeta(reportData.generatedAt);
 
             const hasDistribution = state.results.some((result) => Array.isArray(result.rows));
@@ -578,7 +580,7 @@
             span.textContent = name;
             return span;
         }
-        const host = inferSalesforceHost();
+        const host = state.salesforceHost;
         if (!host) {
             const span = document.createElement("span");
             span.textContent = name;
@@ -592,16 +594,11 @@
         return link;
     }
 
-    function inferSalesforceHost() {
-        if (!document.referrer) {
+    function normalizeHost(host) {
+        if (!host || typeof host !== "string") {
             return null;
         }
-        try {
-            const referrerUrl = new URL(document.referrer);
-            return referrerUrl.host;
-        } catch (error) {
-            return null;
-        }
+        return host.startsWith(".") ? host.substring(1) : host;
     }
 
     function buildComponentLink(host, item) {
