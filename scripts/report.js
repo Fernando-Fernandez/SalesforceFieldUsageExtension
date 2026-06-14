@@ -13,6 +13,7 @@
         normalizePercentage,
         formatDistributionValue,
         sortResults,
+        findDeprecationCandidates,
         formatTimelinePeriod,
         getTimelinePeriods,
         getTimelineValues,
@@ -41,6 +42,9 @@
     const summaryTimelineSectionEl = document.getElementById("summaryTimelineSection");
     const summaryTimelineContainerEl = document.getElementById("summaryTimelineCards");
     const downloadCsvBtn = document.getElementById("downloadCsvBtn");
+    const candidatesSectionEl = document.getElementById("candidatesSection");
+    const candidatesListEl = document.getElementById("candidatesList");
+    const thresholdInputEl = document.getElementById("thresholdInput");
 
     const state = {
         results: [],
@@ -57,6 +61,9 @@
 
     document.addEventListener("DOMContentLoaded", init);
     tableHeaders.forEach((header) => header.addEventListener("click", handleSort));
+    if (thresholdInputEl) {
+        thresholdInputEl.addEventListener("input", () => renderCandidates(state.results));
+    }
 
     async function init() {
         const params = new URLSearchParams(location.search);
@@ -92,6 +99,9 @@
                     summaryTimelineContainerEl.innerHTML = "";
                 }
                 tableSectionEl.hidden = true;
+                if (candidatesSectionEl) {
+                    candidatesSectionEl.hidden = true;
+                }
                 clearStatus();
                 enableCsvDownload();
                 return;
@@ -104,6 +114,7 @@
             if (distributionContainerEl) {
                 distributionContainerEl.innerHTML = "";
             }
+            renderCandidates(state.results);
             renderTable(state.results);
             renderBarChart(state.results);
             renderSummaryTimelines(state.summaryTimeline);
@@ -319,6 +330,54 @@
         }
         const date = new Date(timestamp);
         metaEl.textContent = `Generated on ${date.toLocaleString()}`;
+    }
+
+    // Summary-mode "Candidates for Removal": fields populated below the chosen
+    // threshold, most-empty first. Re-runs live when the threshold input changes.
+    function renderCandidates(results) {
+        if (!candidatesSectionEl || !candidatesListEl) {
+            return;
+        }
+        if (state.mode !== "summary") {
+            candidatesSectionEl.hidden = true;
+            return;
+        }
+        const raw = thresholdInputEl ? Number(thresholdInputEl.value) : 5;
+        const pct = Number.isFinite(raw) ? raw : 5;
+        const candidates = findDeprecationCandidates(results, pct);
+
+        candidatesSectionEl.hidden = false;
+        candidatesListEl.innerHTML = "";
+
+        if (!candidates.length) {
+            const note = document.createElement("p");
+            note.className = "section-note";
+            note.textContent = `No fields are populated below ${pct}%.`;
+            candidatesListEl.appendChild(note);
+            return;
+        }
+
+        const summary = document.createElement("p");
+        summary.className = "section-note";
+        summary.textContent =
+            `${candidates.length} field${candidates.length === 1 ? "" : "s"} populated below ${pct}% ` +
+            `(estimated), least-populated first:`;
+        candidatesListEl.appendChild(summary);
+
+        const table = document.createElement("table");
+        const thead = document.createElement("thead");
+        thead.innerHTML = "<tr><th>SObject</th><th>Field</th><th>Estimated % Non-Null</th></tr>";
+        table.appendChild(thead);
+        const tbody = document.createElement("tbody");
+        candidates.forEach((result) => {
+            const row = document.createElement("tr");
+            row.appendChild(createCell(result.sobjectLabel || result.sobject));
+            row.appendChild(createCell(result.fieldLabel || result.field));
+            row.appendChild(createCell(formatPercentage(result.nonNullPercentage)));
+            tbody.appendChild(row);
+        });
+        table.appendChild(tbody);
+        candidatesListEl.appendChild(table);
     }
 
     function renderTable(results) {

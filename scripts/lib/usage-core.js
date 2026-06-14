@@ -136,6 +136,22 @@
         });
     }
 
+    // Returns the summary results whose non-null percentage is below the given
+    // threshold percent (e.g. 5 -> 0.05), sorted most-empty first — the deprecation
+    // candidates. Results without a numeric percentage are excluded.
+    function findDeprecationCandidates(results, thresholdPercent) {
+        const threshold = (Number(thresholdPercent) || 0) / 100;
+        const list = Array.isArray(results) ? results : [];
+        return list
+            .filter(
+                (result) =>
+                    typeof result.nonNullPercentage === "number" &&
+                    Number.isFinite(result.nonNullPercentage) &&
+                    result.nonNullPercentage < threshold
+            )
+            .sort((a, b) => a.nonNullPercentage - b.nonNullPercentage);
+    }
+
     function formatTimelinePeriod(year, month, locale) {
         if (!year || !month) {
             return "—";
@@ -217,6 +233,41 @@
         return { sobject, field };
     }
 
+    // Serializes the popup's selection (an array of object names + a Map of
+    // object -> field names) into a plain, storable object.
+    function selectionsToStorage(selectedSObjects, selectedFields) {
+        const fields = {};
+        if (selectedFields && typeof selectedFields.forEach === "function") {
+            selectedFields.forEach((list, sobject) => {
+                if (Array.isArray(list) && list.length) {
+                    fields[sobject] = list.slice();
+                }
+            });
+        }
+        return {
+            sobjects: Array.isArray(selectedSObjects) ? selectedSObjects.slice() : [],
+            fields
+        };
+    }
+
+    // Rebuilds a selection from storage, dropping objects no longer present in the
+    // org (validNames). Returns { selectedSObjects, selectedFields: Map }.
+    function selectionsFromStorage(stored, validNames) {
+        const valid = validNames instanceof Set ? validNames : new Set(validNames || []);
+        const sobjects = Array.isArray(stored && stored.sobjects)
+            ? stored.sobjects.filter((name) => valid.has(name))
+            : [];
+        const storedFields = (stored && stored.fields) || {};
+        const selectedFields = new Map();
+        sobjects.forEach((sobject) => {
+            const list = Array.isArray(storedFields[sobject]) ? storedFields[sobject] : [];
+            if (list.length) {
+                selectedFields.set(sobject, list.slice());
+            }
+        });
+        return { selectedSObjects: sobjects, selectedFields };
+    }
+
     // textarea/address fields cannot be used as SOQL filter criteria, so they are
     // skipped by the usage/timeline queries. Unknown/typeless fields are allowed.
     function isFilterableField(fieldMeta) {
@@ -291,6 +342,32 @@
             }
         });
         return best ? `v${best.version}` : fallback;
+    }
+
+    // Parses the Sforce-Limit-Info response header ("api-usage=12345/15000",
+    // possibly with a trailing per-app clause) into { used, limit }, or null.
+    function parseLimitInfo(headerValue) {
+        if (typeof headerValue !== "string") {
+            return null;
+        }
+        const match = headerValue.match(/api-usage=(\d+)\/(\d+)/);
+        if (!match) {
+            return null;
+        }
+        return { used: Number(match[1]), limit: Number(match[2]) };
+    }
+
+    // Estimates how many REST/Tooling calls a scan will make. Distribution scans do
+    // a record count per object plus a distribution and a timeline query per field;
+    // summary scans batch query plans 5 per composite call plus a timeline per
+    // object. Approximate (timeline cost varies), so callers should label it "~".
+    function estimateScanApiCalls(plan) {
+        const objects = Number(plan && plan.sobjectCount) || 0;
+        const fields = Number(plan && plan.fieldCount) || 0;
+        if (plan && plan.mode === "distribution") {
+            return objects + fields * 2;
+        }
+        return Math.ceil(fields / 5) + objects;
     }
 
     // --- field dependency ("where is this field used?") helpers ------------
@@ -573,6 +650,7 @@
         formatDistributionValue,
         getSortValue,
         sortResults,
+        findDeprecationCandidates,
         formatTimelinePeriod,
         getTimelinePeriods,
         getTimelineValues,
@@ -581,12 +659,16 @@
         sanitizeDomain,
         buildFieldKey,
         parseFieldKey,
+        selectionsToStorage,
+        selectionsFromStorage,
         isFilterableField,
         buildExplainUrl,
         parsePlanFromResponse,
         extractCompositeError,
         isAuthFailureStatus,
         pickLatestApiVersion,
+        parseLimitInfo,
+        estimateScanApiCalls,
         parseCustomFieldName,
         buildCustomFieldIdQuery,
         buildDependencyQuery,

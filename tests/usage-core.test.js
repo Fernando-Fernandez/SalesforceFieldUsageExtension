@@ -132,6 +132,31 @@ test("sortResults sorts numbers ascending and descending", () => {
     assert.deepEqual(desc, [3, 2, 1]);
 });
 
+test("findDeprecationCandidates returns fields below the threshold, least-populated first", () => {
+    const results = [
+        { fieldLabel: "A", nonNullPercentage: 0.02 },
+        { fieldLabel: "B", nonNullPercentage: 0.5 },
+        { fieldLabel: "C", nonNullPercentage: 0.049 },
+        { fieldLabel: "D", nonNullPercentage: 0.05 } // exactly 5% is NOT below 5%
+    ];
+    const candidates = core.findDeprecationCandidates(results, 5);
+    assert.deepEqual(candidates.map((r) => r.fieldLabel), ["A", "C"]);
+});
+
+test("findDeprecationCandidates excludes non-numeric percentages and respects a custom threshold", () => {
+    const results = [
+        { fieldLabel: "A", nonNullPercentage: 0.2 },
+        { fieldLabel: "B", nonNullPercentage: null },
+        { fieldLabel: "C", nonNullPercentage: 0.6 }
+    ];
+    assert.deepEqual(core.findDeprecationCandidates(results, 50).map((r) => r.fieldLabel), ["A"]);
+});
+
+test("findDeprecationCandidates tolerates empty/invalid input", () => {
+    assert.deepEqual(core.findDeprecationCandidates(null, 5), []);
+    assert.deepEqual(core.findDeprecationCandidates([], 5), []);
+});
+
 test("sortResults sorts strings case-insensitively via localeCompare", () => {
     const rows = [{ fieldLabel: "banana" }, { fieldLabel: "Apple" }, { fieldLabel: "cherry" }];
     const asc = core.sortResults(rows, "field", "asc").map((r) => r.fieldLabel);

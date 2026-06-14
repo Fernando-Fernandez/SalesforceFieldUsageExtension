@@ -159,7 +159,8 @@ select {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 1rem;
+    flex-wrap: wrap;
+    gap: 0.5rem 1rem;
     position: fixed;
     left: 0;
     bottom: -1rem;
@@ -175,4 +176,14 @@ select {
     flex: 1;
     font-size: 0.9rem;
     color: #56657a;
+}
+
+.scan-estimate {
+    flex-basis: 100%;
+    font-size: 0.82rem;
+    color: #5f6c80;
+}
+
+.scan-estimate:empty {
+    display: none;
 }

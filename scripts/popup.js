@@ -6,6 +6,9 @@
     const INVALIDATE_SESSION = "invalidateSession";
     const REQUEST_SOBJECTS = "getSObjects";
     const STORE_REPORT_DATA = "storeReportData";
+    // Per-org "remember my last selection" cache (object/field API names only — no
+    // sensitive data — so chrome.storage.local is appropriate).
+    const SELECTIONS_STORAGE_KEY = "fieldUsageSelections";
     // Distinct values returned per field in the distribution flow. When the
     // grouped query returns exactly this many rows the result is truncated and
     // the report flags it so percentages are not mistaken for the full picture.
@@ -26,7 +29,11 @@
         extractCompositeError,
         isAuthFailureStatus,
         pickLatestApiVersion,
+        parseLimitInfo,
+        estimateScanApiCalls,
         buildDistributionRows,
+        selectionsToStorage,
+        selectionsFromStorage,
         normalizeTimelineRows
     } = globalThis.SFUsageCore;
 
@@ -42,12 +49,14 @@
     const removeFieldBtn = document.getElementById("removeFieldBtn");
     const processSelectionsBtn = document.getElementById("processSelectionBtn");
     const processStatusEl = document.getElementById("processStatus");
+    const scanEstimateEl = document.getElementById("scanEstimate");
     const recordCountCache = new Map();
 
     const state = {
         host: null,
         sessionId: null,
         apiVersion: DEFAULT_API_VERSION,
+        apiUsage: null,
         sobjects: [],
         filteredSObjects: [],
         fieldCache: new Map(),
@@ -87,9 +96,59 @@
             if (!loadedViaTab) {
                 await loadSObjects();
             }
+
+            await restoreSelections();
         } catch (error) {
             setStatus(error.message || "Unable to connect to Salesforce.", "error");
             console.error(error);
+        }
+    }
+
+    // Saves the current object/field selection for this org so the next visit can
+    // restore it. Best-effort; failures are non-fatal.
+    function persistSelections({ sobjects = state.selectedSObjects, fields = state.selectedFields } = {}) {
+        if (!state.host || !chrome.storage?.local) {
+            return;
+        }
+        chrome.storage.local.get(SELECTIONS_STORAGE_KEY).then((stored) => {
+            const all = stored?.[SELECTIONS_STORAGE_KEY] || {};
+            all[state.host] = selectionsToStorage(sobjects, fields);
+            return chrome.storage.local.set({ [SELECTIONS_STORAGE_KEY]: all });
+        }).catch((error) => console.warn("Unable to persist selections.", error));
+    }
+
+    // Restores the saved selection for this org: re-selects the objects, loads their
+    // fields, and re-selects the fields that still exist.
+    async function restoreSelections() {
+        if (!state.host || !chrome.storage?.local) {
+            return;
+        }
+        try {
+            const stored = await chrome.storage.local.get(SELECTIONS_STORAGE_KEY);
+            const forHost = stored?.[SELECTIONS_STORAGE_KEY]?.[state.host];
+            if (!forHost) {
+                return;
+            }
+            const validNames = new Set(state.sobjects.map((obj) => obj.name));
+            const { selectedSObjects, selectedFields } = selectionsFromStorage(forHost, validNames);
+            if (!selectedSObjects.length) {
+                return;
+            }
+            state.selectedSObjects = selectedSObjects;
+            renderSObjectOptions();
+            await ensureFieldsLoaded(selectedSObjects);
+            selectedFields.forEach((list, sobject) => {
+                const existing = new Set((state.fieldCache.get(sobject) || []).map((field) => field.name));
+                const kept = list.filter((name) => existing.has(name));
+                if (kept.length) {
+                    state.selectedFields.set(sobject, kept);
+                }
+            });
+            renderFieldLists();
+            updateProcessButtonState();
+            setStatus(`Restored your last selection for ${state.host}.`, "info");
+        } catch (error) {
+            console.warn("Unable to restore selections.", error);
         }
     }
 
@@ -220,6 +279,7 @@
         };
 
         const response = await fetch(url, requestOptions);
+        captureLimitInfo(response);
 
         // A 401 usually means the session expired mid-use. Refresh it once and
         // retry the same request before surfacing the error. The same host/url is
@@ -234,6 +294,16 @@
             throw new Error(`Salesforce API error (${response.status}): ${payload}`);
         }
         return response.json();
+    }
+
+    // Records the org's daily API usage from the Sforce-Limit-Info response header
+    // (present on every REST/Tooling response) so the popup can show what remains.
+    function captureLimitInfo(response) {
+        const info = parseLimitInfo(response?.headers?.get?.("Sforce-Limit-Info"));
+        if (info) {
+            state.apiUsage = info;
+            updateScanEstimate();
+        }
     }
 
     function handleFilter(event) {
@@ -658,6 +728,36 @@
         if (!enableProcess) {
             setProcessStatus("");
         }
+        updateScanEstimate();
+    }
+
+    // Shows an approximate API-call count for the pending scan plus the org's
+    // remaining daily limit (once a response has reported it).
+    function updateScanEstimate() {
+        if (!scanEstimateEl) {
+            return;
+        }
+        const objects = state.selectedSObjects;
+        const parts = [];
+        if (objects.length) {
+            const hasExplicit = objects.some((name) => (state.selectedFields.get(name) || []).length > 0);
+            const mode = hasExplicit ? "distribution" : "summary";
+            const fieldCount = objects.reduce((sum, name) => {
+                const selected = state.selectedFields.get(name) || [];
+                const source = hasExplicit ? selected : (state.fieldCache.get(name) || []);
+                return sum + source.length;
+            }, 0);
+            const calls = estimateScanApiCalls({ mode, sobjectCount: objects.length, fieldCount });
+            parts.push(`Estimated API calls for this scan: ~${calls.toLocaleString()}`);
+        }
+        if (state.apiUsage) {
+            const remaining = Math.max(state.apiUsage.limit - state.apiUsage.used, 0);
+            parts.push(
+                `Daily API usage: ${state.apiUsage.used.toLocaleString()}/${state.apiUsage.limit.toLocaleString()} ` +
+                `(${remaining.toLocaleString()} remaining)`
+            );
+        }
+        scanEstimateEl.textContent = parts.join(" • ");
     }
 
     function setProcessStatus(message) {
@@ -695,6 +795,9 @@
             setStatus("Select at least one SObject before processing.", "error");
             return;
         }
+
+        // Remember what was run so the next visit to this org can restore it.
+        persistSelections({ sobjects: targetSObjects });
 
         try {
             await ensureFieldsLoaded(targetSObjects);

@@ -9,6 +9,39 @@ test("sanitizeDomain strips a single leading dot", () => {
     assert.equal(core.sanitizeDomain("my.salesforce.com"), "my.salesforce.com");
 });
 
+test("selectionsToStorage serializes objects and the field Map, dropping empties", () => {
+    const fields = new Map([
+        ["Account", ["Industry", "Type"]],
+        ["Contact", []]
+    ]);
+    assert.deepEqual(core.selectionsToStorage(["Account", "Contact"], fields), {
+        sobjects: ["Account", "Contact"],
+        fields: { Account: ["Industry", "Type"] }
+    });
+});
+
+test("selectionsToStorage handles missing/invalid input", () => {
+    assert.deepEqual(core.selectionsToStorage(null, null), { sobjects: [], fields: {} });
+});
+
+test("selectionsFromStorage rebuilds selection and drops objects no longer in the org", () => {
+    const stored = { sobjects: ["Account", "Gone__c"], fields: { Account: ["Industry"], Gone__c: ["X__c"] } };
+    const { selectedSObjects, selectedFields } = core.selectionsFromStorage(stored, new Set(["Account", "Contact"]));
+    assert.deepEqual(selectedSObjects, ["Account"]);
+    assert.equal(selectedFields instanceof Map, true);
+    assert.deepEqual(selectedFields.get("Account"), ["Industry"]);
+    assert.equal(selectedFields.has("Gone__c"), false);
+});
+
+test("selectionsFromStorage tolerates empty/missing input", () => {
+    const empty = core.selectionsFromStorage(null, new Set(["Account"]));
+    assert.deepEqual(empty.selectedSObjects, []);
+    assert.equal(empty.selectedFields.size, 0);
+    // validNames may also be a plain array
+    const fromArray = core.selectionsFromStorage({ sobjects: ["Account"], fields: {} }, ["Account"]);
+    assert.deepEqual(fromArray.selectedSObjects, ["Account"]);
+});
+
 test("sanitizeDomain throws on a missing domain", () => {
     assert.throws(() => core.sanitizeDomain(""), /domain not returned/i);
     assert.throws(() => core.sanitizeDomain(null), /domain not returned/i);
@@ -121,6 +154,34 @@ test("isAuthFailureStatus triggers a session refresh only on 401", () => {
     assert.equal(core.isAuthFailureStatus(200), false);
     assert.equal(core.isAuthFailureStatus(500), false);
     assert.equal(core.isAuthFailureStatus(undefined), false);
+});
+
+test("parseLimitInfo extracts api usage from the Sforce-Limit-Info header", () => {
+    assert.deepEqual(core.parseLimitInfo("api-usage=12345/15000"), { used: 12345, limit: 15000 });
+    // Tolerates a trailing per-app clause.
+    assert.deepEqual(
+        core.parseLimitInfo("api-usage=10/100; per-app-api-usage=2/50(MyApp)"),
+        { used: 10, limit: 100 }
+    );
+});
+
+test("parseLimitInfo returns null for missing/invalid headers", () => {
+    assert.equal(core.parseLimitInfo(null), null);
+    assert.equal(core.parseLimitInfo(""), null);
+    assert.equal(core.parseLimitInfo("something-else"), null);
+});
+
+test("estimateScanApiCalls: distribution = objects + 2 per field", () => {
+    assert.equal(core.estimateScanApiCalls({ mode: "distribution", sobjectCount: 2, fieldCount: 5 }), 12);
+});
+
+test("estimateScanApiCalls: summary = ceil(fields/5) batches + 1 per object", () => {
+    assert.equal(core.estimateScanApiCalls({ mode: "summary", sobjectCount: 2, fieldCount: 11 }), 5);
+    assert.equal(core.estimateScanApiCalls({ mode: "summary", sobjectCount: 1, fieldCount: 0 }), 1);
+});
+
+test("estimateScanApiCalls tolerates missing fields", () => {
+    assert.equal(core.estimateScanApiCalls({}), 0);
 });
 
 test("pickLatestApiVersion chooses the highest version numerically, not by order", () => {

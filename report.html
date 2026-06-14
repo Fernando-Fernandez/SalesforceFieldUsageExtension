@@ -17,6 +17,16 @@
         Loading report data…
     </section>
 
+    <section id="candidatesSection" hidden>
+        <h2>Candidates for Removal</h2>
+        <div class="candidates-controls">
+            <label for="thresholdInput">Show fields populated below</label>
+            <input type="number" id="thresholdInput" min="0" max="100" step="0.5" value="5">
+            <span>%</span>
+        </div>
+        <div id="candidatesList"></div>
+    </section>
+
     <section id="chartSection" hidden>
         <h2>Estimated Field Non-Null Percentage</h2>
         <p class="section-note">Counts and percentages come from the Salesforce query optimizer's cardinality estimates, not exact record counts, and may differ from a full scan.</p>
