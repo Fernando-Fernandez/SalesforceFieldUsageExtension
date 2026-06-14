@@ -280,6 +280,81 @@
         return entry && typeof entry.count === "number" ? entry.count : null;
     }
 
+    // --- field dependency ("where is this field used?") helpers ------------
+
+    // Derives a custom field's Tooling DeveloperName from its API name: drops the
+    // trailing "__c" and any leading "namespace__" prefix. Returns null for names
+    // without a "__c" suffix (standard fields), which have no CustomField record.
+    function customFieldDeveloperName(apiName) {
+        if (typeof apiName !== "string" || !/__c$/i.test(apiName)) {
+            return null;
+        }
+        const withoutSuffix = apiName.replace(/__c$/i, "");
+        // A managed field is "namespace__Name"; the DeveloperName is the part after
+        // the last remaining "__" separator. A non-namespaced field has none.
+        const separator = withoutSuffix.lastIndexOf("__");
+        const developerName = separator === -1 ? withoutSuffix : withoutSuffix.slice(separator + 2);
+        return developerName || null;
+    }
+
+    // Escapes single quotes so a value can be embedded in a SOQL string literal.
+    function escapeSoqlLiteral(value) {
+        return String(value).replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+    }
+
+    // SOQL to resolve a custom field to its Tooling CustomField Id. Uses the
+    // EntityDefinition relationship so it works for standard and custom objects
+    // without resolving TableEnumOrId.
+    function buildCustomFieldIdQuery(object, developerName) {
+        return (
+            "SELECT Id FROM CustomField WHERE EntityDefinition.QualifiedApiName = '" +
+            escapeSoqlLiteral(object) +
+            "' AND DeveloperName = '" +
+            escapeSoqlLiteral(developerName) +
+            "' LIMIT 1"
+        );
+    }
+
+    // SOQL to list the metadata components that reference a given component id.
+    function buildDependencyQuery(id) {
+        return (
+            "SELECT MetadataComponentName, MetadataComponentType FROM " +
+            "MetadataComponentDependency WHERE RefMetadataComponentId = '" +
+            escapeSoqlLiteral(id) +
+            "'"
+        );
+    }
+
+    // Pulls the first record's Id out of a Tooling query response, or null.
+    function extractFirstId(response) {
+        const records = response && Array.isArray(response.records) ? response.records : null;
+        return records && records[0] && records[0].Id ? records[0].Id : null;
+    }
+
+    // Groups MetadataComponentDependency rows by component type into
+    // [{ type, count, names }], sorted by type, with de-duplicated sorted names.
+    function groupDependencies(rows) {
+        const byType = new Map();
+        (rows || []).forEach((row) => {
+            if (!row) {
+                return;
+            }
+            const type = row.MetadataComponentType || "Unknown";
+            const name = row.MetadataComponentName || "(unnamed)";
+            if (!byType.has(type)) {
+                byType.set(type, new Set());
+            }
+            byType.get(type).add(name);
+        });
+        return Array.from(byType.entries())
+            .map(([type, names]) => ({
+                type,
+                count: names.size,
+                names: Array.from(names).sort((a, b) => a.localeCompare(b))
+            }))
+            .sort((a, b) => a.type.localeCompare(b.type));
+    }
+
     // Adds a per-period percentage to grouped timeline rows (each value's share of
     // its own month) and drops empty rows.
     function normalizeTimelineRows(rows = []) {
@@ -416,6 +491,11 @@
         isAuthFailureStatus,
         pickLatestApiVersion,
         extractRecordCount,
+        customFieldDeveloperName,
+        buildCustomFieldIdQuery,
+        buildDependencyQuery,
+        extractFirstId,
+        groupDependencies,
         normalizeTimelineRows,
         parseOrgIdFromCookie,
         findSessionCookieForOrg,

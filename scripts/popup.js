@@ -411,7 +411,8 @@
                 name: field.name,
                 label: field.label || field.name,
                 type: field.type,
-                groupable: !!field.groupable
+                groupable: !!field.groupable,
+                custom: !!field.custom
             }))
             .sort((a, b) => a.label.localeCompare(b.label));
 
@@ -597,6 +598,11 @@
         const payload = {
             reportId: generateReportId(),
             generatedAt: Date.now(),
+            // Non-sensitive connection info so the report tab can run on-demand
+            // dependency lookups; the session token is fetched separately and
+            // never persisted.
+            host: state.host,
+            apiVersion: state.apiVersion,
             ...data
         };
         return new Promise((resolve, reject) => {
@@ -732,6 +738,7 @@
                     sobjectLabel,
                     field,
                     fieldLabel,
+                    custom: false,
                     recordCount: null,
                     rows: [],
                     timeline: [],
@@ -748,6 +755,7 @@
                     sobjectLabel,
                     field,
                     fieldLabel,
+                    custom: !!fieldMeta.custom,
                     recordCount: null,
                     rows: [],
                     timeline: [],
@@ -779,6 +787,7 @@
                     sobjectLabel,
                     field,
                     fieldLabel,
+                    custom: !!fieldMeta.custom,
                     recordCount: totalRecords,
                     rows: distribution.rows,
                     truncated: !!distribution.truncated,
@@ -794,6 +803,7 @@
                     sobjectLabel,
                     field,
                     fieldLabel,
+                    custom: !!fieldMeta.custom,
                     recordCount: null,
                     rows: [],
                     timeline: [],
