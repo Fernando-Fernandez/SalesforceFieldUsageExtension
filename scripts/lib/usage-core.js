@@ -268,18 +268,6 @@
         return best ? `v${best.version}` : fallback;
     }
 
-    // Reads the count for a specific object out of a /limits/recordCount response
-    // ({ sObjects: [ { name, count } ] }). Returns null when the object is absent
-    // or has no numeric count, signalling callers to fall back to SELECT COUNT().
-    function extractRecordCount(response, sobject) {
-        const list = response && Array.isArray(response.sObjects) ? response.sObjects : null;
-        if (!list) {
-            return null;
-        }
-        const entry = list.find((item) => item && item.name === sobject);
-        return entry && typeof entry.count === "number" ? entry.count : null;
-    }
-
     // --- field dependency ("where is this field used?") helpers ------------
 
     // Splits a custom field API name into its Tooling { namespace, developerName }.
@@ -501,7 +489,6 @@
         extractCompositeError,
         isAuthFailureStatus,
         pickLatestApiVersion,
-        extractRecordCount,
         parseCustomFieldName,
         buildCustomFieldIdQuery,
         buildDependencyQuery,
