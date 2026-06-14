@@ -426,18 +426,24 @@
 
     // Compares the picklist's defined values (from describe — active values) against
     // the values actually present in the data. Returns:
-    //   unused        - defined values with no records (dead entries, safe to remove)
-    //   nonConforming - values in the data that are not defined (inactive/legacy/junk)
-    function analyzePicklistHealth(definedValues, usedValues) {
+    //   unused        - defined values with no records (dead entries, safe to remove),
+    //                   or null when sampleTruncated: the used set is only the top-N
+    //                   values, so a value missing from it might still be used beyond
+    //                   the cap and cannot be declared unused.
+    //   nonConforming - values in the data that are not defined (inactive/legacy/junk);
+    //                   always valid since the observed values genuinely exist.
+    function analyzePicklistHealth(definedValues, usedValues, sampleTruncated) {
         const defined = Array.isArray(definedValues) ? definedValues : [];
         const used = Array.isArray(usedValues) ? usedValues : [];
         const usedKeys = new Set(
             used.filter((u) => u && u.value != null).map((u) => String(u.value))
         );
         const definedKeys = new Set(defined.filter((d) => d && d.value != null).map((d) => String(d.value)));
-        const unused = defined
-            .filter((d) => d && d.value != null && !usedKeys.has(String(d.value)))
-            .map((d) => ({ value: d.value, label: d.label != null ? d.label : d.value }));
+        const unused = sampleTruncated
+            ? null
+            : defined
+                .filter((d) => d && d.value != null && !usedKeys.has(String(d.value)))
+                .map((d) => ({ value: d.value, label: d.label != null ? d.label : d.value }));
         const nonConforming = used
             .filter((u) => u && u.value != null && !definedKeys.has(String(u.value)))
             .map((u) => ({ value: u.value, count: Number(u.count) || 0 }));

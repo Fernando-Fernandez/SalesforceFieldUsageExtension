@@ -788,7 +788,13 @@
                     statusMessage = `${statusMessage} | Timeline error: ${timelineError.message || timelineError}`;
                     timelineMessage = `Timeline unavailable: ${timelineError.message || timelineError}`;
                 }
-                const isPicklist = fieldMeta.type === "picklist" || fieldMeta.type === "multipicklist";
+                // Only attach picklist values when the field was actually grouped:
+                // a non-groupable field falls back to synthetic NOT NULL/NULL buckets
+                // (no real values), which would make the health check compare options
+                // against NOT NULL and mislabel every value.
+                const isPicklist =
+                    (fieldMeta.type === "picklist" || fieldMeta.type === "multipicklist") &&
+                    fieldMeta.groupable;
                 results.push({
                     sobject,
                     sobjectLabel,

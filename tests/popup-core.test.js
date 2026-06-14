@@ -231,6 +231,16 @@ test("analyzePicklistHealth flags unused defined values and non-conforming data"
     assert.deepEqual(nonConforming, [{ value: "Legacy", count: 4 }]);
 });
 
+test("analyzePicklistHealth returns unused=null for a truncated sample but still flags non-conforming", () => {
+    const defined = [{ value: "A", label: "A" }, { value: "B", label: "B" }];
+    // "B" is absent from this (truncated) sample, but we must not call it unused
+    // because it could be used beyond the top-N cap.
+    const used = [{ value: "A", count: 9 }, { value: "Legacy", count: 1 }];
+    const result = core.analyzePicklistHealth(defined, used, true);
+    assert.equal(result.unused, null);
+    assert.deepEqual(result.nonConforming, [{ value: "Legacy", count: 1 }]);
+});
+
 test("analyzePicklistHealth reports a clean picklist as fully healthy", () => {
     const defined = [{ value: "A", label: "A" }, { value: "B", label: "B" }];
     const used = [{ value: "A", count: 1 }, { value: "B", count: 2 }];

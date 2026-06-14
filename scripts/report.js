@@ -691,7 +691,7 @@
             return null;
         }
         const used = extractUsedPicklistValues(result.rows, result.multiSelect);
-        const { unused, nonConforming } = analyzePicklistHealth(defined, used);
+        const { unused, nonConforming } = analyzePicklistHealth(defined, used, result.truncated);
 
         const container = document.createElement("div");
         container.className = "picklist-health";
@@ -700,18 +700,27 @@
         title.textContent = "Picklist Health";
         container.appendChild(title);
 
-        if (result.truncated) {
+        const cap = result.distinctLimit || 100;
+
+        // unused === null means the distribution was truncated, so unused-value
+        // detection isn't reliable (a value beyond the top `cap` would look unused).
+        // Non-conforming values we DID observe are still genuine and safe to report.
+        if (unused === null) {
             appendPicklistNote(
                 container,
-                `Based on the ${result.distinctLimit || 100} most common values; rarely-used values may be undercounted.`
+                `This field has more than ${cap} distinct values in the data, so unused-value ` +
+                `detection isn't available (a value outside the top ${cap} could still be in use).`
             );
+            if (nonConforming.length) {
+                appendNonConforming(container, nonConforming);
+            }
+            return container;
         }
 
         if (!unused.length && !nonConforming.length) {
             appendPicklistNote(container, "All defined values are in use and all data matches the picklist.");
             return container;
         }
-
         if (unused.length) {
             const labels = unused.map((entry) => formatDistributionValue(entry.label ?? entry.value));
             container.appendChild(
@@ -722,17 +731,21 @@
             );
         }
         if (nonConforming.length) {
-            const labels = nonConforming.map(
-                (entry) => `${formatDistributionValue(entry.value)} (${formatNumber(entry.count)})`
-            );
-            container.appendChild(
-                buildPicklistGroup(
-                    `Values in data but not in the picklist (${nonConforming.length}) — inactive or non-conforming:`,
-                    labels.join(", ")
-                )
-            );
+            appendNonConforming(container, nonConforming);
         }
         return container;
+    }
+
+    function appendNonConforming(container, nonConforming) {
+        const labels = nonConforming.map(
+            (entry) => `${formatDistributionValue(entry.value)} (${formatNumber(entry.count)})`
+        );
+        container.appendChild(
+            buildPicklistGroup(
+                `Values in data but not in the picklist (${nonConforming.length}) — inactive or non-conforming:`,
+                labels.join(", ")
+            )
+        );
     }
 
     function appendPicklistNote(parent, text) {
