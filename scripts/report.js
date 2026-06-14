@@ -10,7 +10,6 @@
         formatPercentage,
         normalizePercentage,
         formatDistributionValue,
-        getSortValue,
         sortResults,
         formatTimelinePeriod,
         getTimelinePeriods,

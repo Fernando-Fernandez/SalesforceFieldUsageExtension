@@ -27,8 +27,16 @@ const REPORT_STORE_KEY = "reportDataStore";
 // the report tab works even after the worker has been torn down. Capped so a long
 // session does not accumulate unbounded report payloads.
 const MAX_STORED_REPORTS = 10;
-const tabSessionStorage = chrome.storage?.session || chrome.storage?.local;
-const reportStorage = chrome.storage?.session || chrome.storage?.local;
+// Session storage only (never chrome.storage.local): session ids and cached report
+// data are sensitive and must not be written to disk where they would outlive the
+// browser session. These are in-memory, cleared when the browser closes.
+const tabSessionStorage = chrome.storage?.session;
+const reportStorage = chrome.storage?.session;
+// Secure "sid" cookies are searched on these base domains in order; the first that
+// yields a cookie matching the org wins. salesforce.com covers commercial orgs.
+// Government Cloud orgs would need their base domain (e.g. "salesforce.mil") added
+// here AND to host_permissions in manifest.json.
+const SESSION_COOKIE_DOMAINS = [ "salesforce.com", "cloudforce.com" ];
 
 hydrateTabSessions();
 
@@ -90,37 +98,28 @@ function getHostAndSession( message, sender, responseCallback ) {
         responseCallback( tabSessionMap.get( requestedTabUrl ) );
         return;
     }
-    console.log( "Getting session for url: ", requestedTabUrl );
 
-    // first, get org id from unsecure cookie
-    console.log( "Sender: ", sender );
-    console.log( "Sender.tab: ", sender.tab );
+    // first, get org id from the cookie set for the current page
+    let storeId = sender?.tab?.cookieStoreId;
     let cookieDetails = { name: "sid"
                         , url: message.url
-                        , storeId: sender.tab.cookieStoreId 
+                        , storeId
                     };
-    console.log( "Getting cookie: ", cookieDetails );
     chrome.cookies.get( cookieDetails, cookie => {
         if( ! cookie ) {
             responseCallback( null );
             return;
         }
 
-        // try getting all secure cookies from salesforce.com and find the one matching our org id
-        // (we may have more than one org open in different tabs or cookies from past orgs/sessions)
+        // find the secure session cookie matching our org id across the known base
+        // domains (we may have more than one org open, or stale cookies from past sessions)
         let orgId = parseOrgIdFromCookie( cookie.value );
         if( ! orgId ) {
             responseCallback( null );
             return;
         }
-        let secureCookieDetails = { name: "sid"
-                                    , domain: "salesforce.com"
-                                    , secure: true
-                                    , storeId: sender.tab.cookieStoreId
-                                };
-        chrome.cookies.getAll( secureCookieDetails, cookies => {
-            // find the cookie for our org
-            let sessionCookie = findSessionCookieForOrg( cookies, orgId );
+
+        findSecureSessionCookie( orgId, storeId, sessionCookie => {
             if( ! sessionCookie ) {
                 responseCallback( null );
                 return;
@@ -133,10 +132,32 @@ function getHostAndSession( message, sender, responseCallback ) {
                 persistTabSessions();
             }
 
-            responseCallback( { domain: sessionCookie.domain 
+            responseCallback( { domain: sessionCookie.domain
                                 , session:  sessionCookie.value
                             } );
         });
+    });
+}
+
+// Searches the configured base domains in order for a secure "sid" cookie matching
+// the org, invoking callback with the first match (or null when none is found).
+function findSecureSessionCookie( orgId, storeId, callback, domainIndex = 0 ) {
+    if( domainIndex >= SESSION_COOKIE_DOMAINS.length ) {
+        callback( null );
+        return;
+    }
+    let secureCookieDetails = { name: "sid"
+                                , domain: SESSION_COOKIE_DOMAINS[ domainIndex ]
+                                , secure: true
+                                , storeId
+                            };
+    chrome.cookies.getAll( secureCookieDetails, cookies => {
+        let sessionCookie = findSessionCookieForOrg( cookies, orgId );
+        if( sessionCookie ) {
+            callback( sessionCookie );
+            return;
+        }
+        findSecureSessionCookie( orgId, storeId, callback, domainIndex + 1 );
     });
 }
 
