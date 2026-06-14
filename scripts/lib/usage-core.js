@@ -19,6 +19,16 @@
         return result;
     }
 
+    // Salesforce returns a "__MISSING LABEL__ PropertyFile - val <key>" placeholder
+    // as the label for objects with no localized label (mostly internal/system
+    // objects). Fall back to the API name so the picker shows something sensible.
+    function cleanSObjectLabel(label, name) {
+        if (!label || /__MISSING LABEL__/.test(label)) {
+            return name;
+        }
+        return label;
+    }
+
     function formatNumber(value) {
         if (value === null || value === undefined) {
             return "—";
@@ -491,6 +501,7 @@
 
     const api = {
         chunkArray,
+        cleanSObjectLabel,
         formatNumber,
         formatPercentage,
         normalizePercentage,

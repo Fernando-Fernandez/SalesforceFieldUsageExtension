@@ -18,6 +18,16 @@ test("chunkArray is safe for empty/invalid input", () => {
     assert.deepEqual(core.chunkArray([1, 2, 3], 0), []);
 });
 
+test("cleanSObjectLabel falls back to the API name for missing/placeholder labels", () => {
+    assert.equal(core.cleanSObjectLabel("Account", "Account"), "Account");
+    assert.equal(core.cleanSObjectLabel("", "Foo__c"), "Foo__c");
+    assert.equal(core.cleanSObjectLabel(null, "Foo__c"), "Foo__c");
+    assert.equal(
+        core.cleanSObjectLabel("__MISSING LABEL__ PropertyFile - val Appointment", "Appointment__x"),
+        "Appointment__x"
+    );
+});
+
 test("formatNumber renders an em dash for nullish/NaN", () => {
     assert.equal(core.formatNumber(null), "—");
     assert.equal(core.formatNumber(undefined), "—");
