@@ -7,6 +7,7 @@
     // rest of this file reads unchanged.
     const {
         chunkArray,
+        toCsv,
         formatNumber,
         formatPercentage,
         normalizePercentage,
@@ -23,7 +24,9 @@
         buildCustomFieldIdQuery,
         buildDependencyQuery,
         extractFirstId,
-        groupDependencies
+        groupDependencies,
+        extractUsedPicklistValues,
+        analyzePicklistHealth
     } = globalThis.SFUsageCore;
 
     const statusEl = document.getElementById("reportStatus");
@@ -37,6 +40,7 @@
     const distributionContainerEl = document.getElementById("distributionTables");
     const summaryTimelineSectionEl = document.getElementById("summaryTimelineSection");
     const summaryTimelineContainerEl = document.getElementById("summaryTimelineCards");
+    const downloadCsvBtn = document.getElementById("downloadCsvBtn");
 
     const state = {
         results: [],
@@ -89,6 +93,7 @@
                 }
                 tableSectionEl.hidden = true;
                 clearStatus();
+                enableCsvDownload();
                 return;
             }
 
@@ -104,10 +109,84 @@
             renderSummaryTimelines(state.summaryTimeline);
             clearStatus();
             tableSectionEl.hidden = false;
+            enableCsvDownload();
         } catch (error) {
             console.error("Unable to load report", error);
             setStatus(error.message || "Unable to load report.", "error");
         }
+    }
+
+    function enableCsvDownload() {
+        if (!downloadCsvBtn) {
+            return;
+        }
+        downloadCsvBtn.hidden = false;
+        downloadCsvBtn.onclick = () => {
+            const { csv, filename } = buildCsv();
+            downloadCsv(filename, csv);
+        };
+    }
+
+    // Builds the CSV for the current report mode: flattened value rows for the
+    // distribution report, or the field-summary table for the summary report.
+    function buildCsv() {
+        const stamp = new Date().toISOString().slice(0, 10);
+        if (state.mode === "distribution") {
+            const headers = ["SObject", "Field", "Value", "Value Count", "Percent"];
+            const rows = [];
+            state.results.forEach((result) => {
+                const distributionRows = Array.isArray(result.rows) ? result.rows : [];
+                if (!distributionRows.length) {
+                    rows.push([result.sobjectLabel || result.sobject, result.fieldLabel || result.field, "", "", ""]);
+                    return;
+                }
+                distributionRows.forEach((row) => {
+                    rows.push([
+                        result.sobjectLabel || result.sobject,
+                        result.fieldLabel || result.field,
+                        formatDistributionValue(row.value),
+                        row.count,
+                        csvPercent(row.percentage)
+                    ]);
+                });
+            });
+            return { csv: toCsv(headers, rows), filename: `field-usage-distribution-${stamp}.csv` };
+        }
+        const headers = [
+            "SObject",
+            "Field",
+            "SObject Count",
+            "Estimated Non-Null Count",
+            "Estimated Percent Non-Null"
+        ];
+        const rows = state.results.map((result) => [
+            result.sobjectLabel || result.sobject,
+            result.fieldLabel || result.field,
+            result.sobjectCount,
+            result.nonNullCount,
+            csvPercent(result.nonNullPercentage)
+        ]);
+        return { csv: toCsv(headers, rows), filename: `field-usage-summary-${stamp}.csv` };
+    }
+
+    // Renders a 0..1 ratio as a plain numeric percent (e.g. 0.75 -> "75.00") so the
+    // CSV stays analysis-friendly in a spreadsheet; blank for non-numeric.
+    function csvPercent(value) {
+        const numeric = typeof value === "number" ? value : Number(value);
+        return Number.isFinite(numeric) ? (numeric * 100).toFixed(2) : "";
+    }
+
+    function downloadCsv(filename, csv) {
+        // Prepend a UTF-8 BOM so Excel reads non-ASCII values correctly.
+        const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
+        const url = URL.createObjectURL(blob);
+        const anchor = document.createElement("a");
+        anchor.href = url;
+        anchor.download = filename;
+        document.body.appendChild(anchor);
+        anchor.click();
+        anchor.remove();
+        URL.revokeObjectURL(url);
     }
 
     function requestReportData(reportId) {
@@ -592,10 +671,98 @@
                 card.appendChild(timelineEl);
             }
 
+            const picklistEl = buildPicklistHealthSection(result);
+            if (picklistEl) {
+                card.appendChild(picklistEl);
+            }
+
             card.appendChild(buildDependencySection(result));
 
             distributionContainerEl.appendChild(card);
         });
+    }
+
+    // For picklist/multipicklist fields, compares the field's defined (active)
+    // values against the values present in the data and flags dead entries and
+    // values that fall outside the picklist. Returns null for non-picklist fields.
+    function buildPicklistHealthSection(result) {
+        const defined = Array.isArray(result.picklistValues) ? result.picklistValues : null;
+        if (!defined || !defined.length) {
+            return null;
+        }
+        const used = extractUsedPicklistValues(result.rows, result.multiSelect);
+        const { unused, nonConforming } = analyzePicklistHealth(defined, used, result.truncated);
+
+        const container = document.createElement("div");
+        container.className = "picklist-health";
+
+        const title = document.createElement("h4");
+        title.textContent = "Picklist Health";
+        container.appendChild(title);
+
+        const cap = result.distinctLimit || 100;
+
+        // unused === null means the distribution was truncated, so unused-value
+        // detection isn't reliable (a value beyond the top `cap` would look unused).
+        // Non-conforming values we DID observe are still genuine and safe to report.
+        if (unused === null) {
+            appendPicklistNote(
+                container,
+                `This field has more than ${cap} distinct values in the data, so unused-value ` +
+                `detection isn't available (a value outside the top ${cap} could still be in use).`
+            );
+            if (nonConforming.length) {
+                appendNonConforming(container, nonConforming);
+            }
+            return container;
+        }
+
+        if (!unused.length && !nonConforming.length) {
+            appendPicklistNote(container, "All defined values are in use and all data matches the picklist.");
+            return container;
+        }
+        if (unused.length) {
+            const labels = unused.map((entry) => formatDistributionValue(entry.label ?? entry.value));
+            container.appendChild(
+                buildPicklistGroup(
+                    `Unused defined values (${unused.length}) — no records use them; candidates to remove:`,
+                    labels.join(", ")
+                )
+            );
+        }
+        if (nonConforming.length) {
+            appendNonConforming(container, nonConforming);
+        }
+        return container;
+    }
+
+    function appendNonConforming(container, nonConforming) {
+        const labels = nonConforming.map(
+            (entry) => `${formatDistributionValue(entry.value)} (${formatNumber(entry.count)})`
+        );
+        container.appendChild(
+            buildPicklistGroup(
+                `Values in data but not in the picklist (${nonConforming.length}) — inactive or non-conforming:`,
+                labels.join(", ")
+            )
+        );
+    }
+
+    function appendPicklistNote(parent, text) {
+        const note = document.createElement("p");
+        note.className = "picklist-health__note";
+        note.textContent = text;
+        parent.appendChild(note);
+    }
+
+    function buildPicklistGroup(heading, body) {
+        const wrapper = document.createElement("p");
+        wrapper.className = "picklist-health__group";
+        const strong = document.createElement("strong");
+        strong.textContent = heading + " ";
+        wrapper.appendChild(strong);
+        wrapper.appendChild(document.createTextNode(body));
+        return wrapper;
     }
 
     // Renders the "Field Usage in Metadata" block: a button that, on click, runs

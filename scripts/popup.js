@@ -415,7 +415,12 @@
                 name: field.name,
                 label: field.label || field.name,
                 type: field.type,
-                groupable: !!field.groupable
+                groupable: !!field.groupable,
+                // describe returns active picklist values only; used for the
+                // picklist health check in the distribution report.
+                picklistValues: Array.isArray(field.picklistValues)
+                    ? field.picklistValues.map((pv) => ({ value: pv.value, label: pv.label || pv.value }))
+                    : []
             }))
             .sort((a, b) => a.label.localeCompare(b.label));
 
@@ -740,7 +745,8 @@
                     sobject,
                     sobjectLabel,
                     field,
-                    fieldLabel,                    recordCount: null,
+                    fieldLabel,
+                    recordCount: null,
                     rows: [],
                     timeline: [],
                     timelineMessage: "",
@@ -755,7 +761,8 @@
                     sobject,
                     sobjectLabel,
                     field,
-                    fieldLabel,                    recordCount: null,
+                    fieldLabel,
+                    recordCount: null,
                     rows: [],
                     timeline: [],
                     timelineMessage: "",
@@ -781,14 +788,24 @@
                     statusMessage = `${statusMessage} | Timeline error: ${timelineError.message || timelineError}`;
                     timelineMessage = `Timeline unavailable: ${timelineError.message || timelineError}`;
                 }
+                // Only attach picklist values when the field was actually grouped:
+                // a non-groupable field falls back to synthetic NOT NULL/NULL buckets
+                // (no real values), which would make the health check compare options
+                // against NOT NULL and mislabel every value.
+                const isPicklist =
+                    (fieldMeta.type === "picklist" || fieldMeta.type === "multipicklist") &&
+                    fieldMeta.groupable;
                 results.push({
                     sobject,
                     sobjectLabel,
                     field,
-                    fieldLabel,                    recordCount: totalRecords,
+                    fieldLabel,
+                    recordCount: totalRecords,
                     rows: distribution.rows,
                     truncated: !!distribution.truncated,
                     distinctLimit: distribution.distinctLimit ?? null,
+                    picklistValues: isPicklist ? fieldMeta.picklistValues : null,
+                    multiSelect: fieldMeta.type === "multipicklist",
                     timeline: timelineRows,
                     timelineMessage,
                     status: statusMessage
@@ -799,7 +816,8 @@
                     sobject,
                     sobjectLabel,
                     field,
-                    fieldLabel,                    recordCount: null,
+                    fieldLabel,
+                    recordCount: null,
                     rows: [],
                     timeline: [],
                     timelineMessage: "",
