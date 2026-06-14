@@ -24,7 +24,9 @@
         buildCustomFieldIdQuery,
         buildDependencyQuery,
         extractFirstId,
-        groupDependencies
+        groupDependencies,
+        extractUsedPicklistValues,
+        analyzePicklistHealth
     } = globalThis.SFUsageCore;
 
     const statusEl = document.getElementById("reportStatus");
@@ -669,10 +671,85 @@
                 card.appendChild(timelineEl);
             }
 
+            const picklistEl = buildPicklistHealthSection(result);
+            if (picklistEl) {
+                card.appendChild(picklistEl);
+            }
+
             card.appendChild(buildDependencySection(result));
 
             distributionContainerEl.appendChild(card);
         });
+    }
+
+    // For picklist/multipicklist fields, compares the field's defined (active)
+    // values against the values present in the data and flags dead entries and
+    // values that fall outside the picklist. Returns null for non-picklist fields.
+    function buildPicklistHealthSection(result) {
+        const defined = Array.isArray(result.picklistValues) ? result.picklistValues : null;
+        if (!defined || !defined.length) {
+            return null;
+        }
+        const used = extractUsedPicklistValues(result.rows, result.multiSelect);
+        const { unused, nonConforming } = analyzePicklistHealth(defined, used);
+
+        const container = document.createElement("div");
+        container.className = "picklist-health";
+
+        const title = document.createElement("h4");
+        title.textContent = "Picklist Health";
+        container.appendChild(title);
+
+        if (result.truncated) {
+            appendPicklistNote(
+                container,
+                `Based on the ${result.distinctLimit || 100} most common values; rarely-used values may be undercounted.`
+            );
+        }
+
+        if (!unused.length && !nonConforming.length) {
+            appendPicklistNote(container, "All defined values are in use and all data matches the picklist.");
+            return container;
+        }
+
+        if (unused.length) {
+            const labels = unused.map((entry) => formatDistributionValue(entry.label ?? entry.value));
+            container.appendChild(
+                buildPicklistGroup(
+                    `Unused defined values (${unused.length}) — no records use them; candidates to remove:`,
+                    labels.join(", ")
+                )
+            );
+        }
+        if (nonConforming.length) {
+            const labels = nonConforming.map(
+                (entry) => `${formatDistributionValue(entry.value)} (${formatNumber(entry.count)})`
+            );
+            container.appendChild(
+                buildPicklistGroup(
+                    `Values in data but not in the picklist (${nonConforming.length}) — inactive or non-conforming:`,
+                    labels.join(", ")
+                )
+            );
+        }
+        return container;
+    }
+
+    function appendPicklistNote(parent, text) {
+        const note = document.createElement("p");
+        note.className = "picklist-health__note";
+        note.textContent = text;
+        parent.appendChild(note);
+    }
+
+    function buildPicklistGroup(heading, body) {
+        const wrapper = document.createElement("p");
+        wrapper.className = "picklist-health__group";
+        const strong = document.createElement("strong");
+        strong.textContent = heading + " ";
+        wrapper.appendChild(strong);
+        wrapper.appendChild(document.createTextNode(body));
+        return wrapper;
     }
 
     // Renders the "Field Usage in Metadata" block: a button that, on click, runs

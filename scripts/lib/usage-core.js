@@ -391,6 +391,49 @@
         return { rows, truncated };
     }
 
+    // --- picklist health helpers -------------------------------------------
+
+    // Turns distribution rows into the set of actually-used picklist values with
+    // counts. For multi-select fields a row value is a ";"-joined combination, so
+    // it is split and each member accrues the row's count. NULL/blank are skipped.
+    function extractUsedPicklistValues(rows, isMultiSelect) {
+        const counts = new Map();
+        (rows || []).forEach((row) => {
+            if (!row || row.value === null || row.value === undefined) {
+                return;
+            }
+            const count = Number(row.count) || 0;
+            const parts = isMultiSelect ? String(row.value).split(";") : [String(row.value)];
+            parts.forEach((part) => {
+                const value = part.trim();
+                if (value !== "") {
+                    counts.set(value, (counts.get(value) || 0) + count);
+                }
+            });
+        });
+        return Array.from(counts.entries()).map(([value, count]) => ({ value, count }));
+    }
+
+    // Compares the picklist's defined values (from describe — active values) against
+    // the values actually present in the data. Returns:
+    //   unused        - defined values with no records (dead entries, safe to remove)
+    //   nonConforming - values in the data that are not defined (inactive/legacy/junk)
+    function analyzePicklistHealth(definedValues, usedValues) {
+        const defined = Array.isArray(definedValues) ? definedValues : [];
+        const used = Array.isArray(usedValues) ? usedValues : [];
+        const usedKeys = new Set(
+            used.filter((u) => u && u.value != null).map((u) => String(u.value))
+        );
+        const definedKeys = new Set(defined.filter((d) => d && d.value != null).map((d) => String(d.value)));
+        const unused = defined
+            .filter((d) => d && d.value != null && !usedKeys.has(String(d.value)))
+            .map((d) => ({ value: d.value, label: d.label != null ? d.label : d.value }));
+        const nonConforming = used
+            .filter((u) => u && u.value != null && !definedKeys.has(String(u.value)))
+            .map((u) => ({ value: u.value, count: Number(u.count) || 0 }));
+        return { unused, nonConforming };
+    }
+
     // Adds a per-period percentage to grouped timeline rows (each value's share of
     // its own month) and drops empty rows.
     function normalizeTimelineRows(rows = []) {
@@ -533,6 +576,8 @@
         extractFirstId,
         groupDependencies,
         buildDistributionRows,
+        extractUsedPicklistValues,
+        analyzePicklistHealth,
         normalizeTimelineRows,
         parseOrgIdFromCookie,
         findSessionCookieForOrg,

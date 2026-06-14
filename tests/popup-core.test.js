@@ -190,6 +190,61 @@ test("buildDistributionRows tolerates non-array input", () => {
     assert.deepEqual(core.buildDistributionRows(null, "F__c", 10, 100), { rows: [], truncated: false });
 });
 
+test("extractUsedPicklistValues returns used single-select values, skipping NULL", () => {
+    const rows = [
+        { value: "Open", count: 5 },
+        { value: "Closed", count: 3 },
+        { value: null, count: 2 }
+    ];
+    assert.deepEqual(core.extractUsedPicklistValues(rows, false), [
+        { value: "Open", count: 5 },
+        { value: "Closed", count: 3 }
+    ]);
+});
+
+test("extractUsedPicklistValues splits multi-select combinations and sums counts", () => {
+    const rows = [
+        { value: "A;B", count: 2 },
+        { value: "B;C", count: 3 },
+        { value: "A", count: 1 }
+    ];
+    const used = core.extractUsedPicklistValues(rows, true);
+    const asMap = Object.fromEntries(used.map((u) => [u.value, u.count]));
+    assert.deepEqual(asMap, { A: 3, B: 5, C: 3 });
+});
+
+test("analyzePicklistHealth flags unused defined values and non-conforming data", () => {
+    const defined = [
+        { value: "Open", label: "Open" },
+        { value: "Closed", label: "Closed" },
+        { value: "OnHold", label: "On Hold" }
+    ];
+    const used = [
+        { value: "Open", count: 10 },
+        { value: "Legacy", count: 4 }
+    ];
+    const { unused, nonConforming } = core.analyzePicklistHealth(defined, used);
+    assert.deepEqual(unused, [
+        { value: "Closed", label: "Closed" },
+        { value: "OnHold", label: "On Hold" }
+    ]);
+    assert.deepEqual(nonConforming, [{ value: "Legacy", count: 4 }]);
+});
+
+test("analyzePicklistHealth reports a clean picklist as fully healthy", () => {
+    const defined = [{ value: "A", label: "A" }, { value: "B", label: "B" }];
+    const used = [{ value: "A", count: 1 }, { value: "B", count: 2 }];
+    assert.deepEqual(core.analyzePicklistHealth(defined, used), { unused: [], nonConforming: [] });
+});
+
+test("analyzePicklistHealth tolerates empty/invalid input", () => {
+    assert.deepEqual(core.analyzePicklistHealth(null, null), { unused: [], nonConforming: [] });
+    assert.deepEqual(core.analyzePicklistHealth([{ value: "A", label: "A" }], []), {
+        unused: [{ value: "A", label: "A" }],
+        nonConforming: []
+    });
+});
+
 test("parseCustomFieldName splits namespace and developer name", () => {
     assert.deepEqual(core.parseCustomFieldName("Foo__c"), { namespace: null, developerName: "Foo" });
     assert.deepEqual(core.parseCustomFieldName("ns__Foo__c"), { namespace: "ns", developerName: "Foo" });

@@ -354,6 +354,30 @@ th[data-sort-direction="desc"]::after {
     margin-top: 0.4rem;
 }
 
+.picklist-health {
+    margin-top: 1rem;
+    padding-top: 0.75rem;
+    border-top: 1px solid #eef1f7;
+}
+
+.picklist-health h4 {
+    margin: 0 0 0.5rem;
+    font-size: 0.95rem;
+    color: #2f3c4d;
+}
+
+.picklist-health__note {
+    margin: 0 0 0.4rem;
+    font-size: 0.85rem;
+    color: #5f6c80;
+}
+
+.picklist-health__group {
+    margin: 0 0 0.4rem;
+    font-size: 0.9rem;
+    color: #2f3c4d;
+}
+
 .summary-dependencies__output .distribution-dependencies__list {
     padding-left: 1rem;
 }
