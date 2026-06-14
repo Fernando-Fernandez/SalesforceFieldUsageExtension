@@ -328,6 +328,32 @@
         return best ? `v${best.version}` : fallback;
     }
 
+    // Parses the Sforce-Limit-Info response header ("api-usage=12345/15000",
+    // possibly with a trailing per-app clause) into { used, limit }, or null.
+    function parseLimitInfo(headerValue) {
+        if (typeof headerValue !== "string") {
+            return null;
+        }
+        const match = headerValue.match(/api-usage=(\d+)\/(\d+)/);
+        if (!match) {
+            return null;
+        }
+        return { used: Number(match[1]), limit: Number(match[2]) };
+    }
+
+    // Estimates how many REST/Tooling calls a scan will make. Distribution scans do
+    // a record count per object plus a distribution and a timeline query per field;
+    // summary scans batch query plans 5 per composite call plus a timeline per
+    // object. Approximate (timeline cost varies), so callers should label it "~".
+    function estimateScanApiCalls(plan) {
+        const objects = Number(plan && plan.sobjectCount) || 0;
+        const fields = Number(plan && plan.fieldCount) || 0;
+        if (plan && plan.mode === "distribution") {
+            return objects + fields * 2;
+        }
+        return Math.ceil(fields / 5) + objects;
+    }
+
     // --- field dependency ("where is this field used?") helpers ------------
 
     // Splits a custom field API name into its Tooling { namespace, developerName }.
@@ -624,6 +650,8 @@
         extractCompositeError,
         isAuthFailureStatus,
         pickLatestApiVersion,
+        parseLimitInfo,
+        estimateScanApiCalls,
         parseCustomFieldName,
         buildCustomFieldIdQuery,
         buildDependencyQuery,

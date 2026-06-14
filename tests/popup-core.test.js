@@ -156,6 +156,34 @@ test("isAuthFailureStatus triggers a session refresh only on 401", () => {
     assert.equal(core.isAuthFailureStatus(undefined), false);
 });
 
+test("parseLimitInfo extracts api usage from the Sforce-Limit-Info header", () => {
+    assert.deepEqual(core.parseLimitInfo("api-usage=12345/15000"), { used: 12345, limit: 15000 });
+    // Tolerates a trailing per-app clause.
+    assert.deepEqual(
+        core.parseLimitInfo("api-usage=10/100; per-app-api-usage=2/50(MyApp)"),
+        { used: 10, limit: 100 }
+    );
+});
+
+test("parseLimitInfo returns null for missing/invalid headers", () => {
+    assert.equal(core.parseLimitInfo(null), null);
+    assert.equal(core.parseLimitInfo(""), null);
+    assert.equal(core.parseLimitInfo("something-else"), null);
+});
+
+test("estimateScanApiCalls: distribution = objects + 2 per field", () => {
+    assert.equal(core.estimateScanApiCalls({ mode: "distribution", sobjectCount: 2, fieldCount: 5 }), 12);
+});
+
+test("estimateScanApiCalls: summary = ceil(fields/5) batches + 1 per object", () => {
+    assert.equal(core.estimateScanApiCalls({ mode: "summary", sobjectCount: 2, fieldCount: 11 }), 5);
+    assert.equal(core.estimateScanApiCalls({ mode: "summary", sobjectCount: 1, fieldCount: 0 }), 1);
+});
+
+test("estimateScanApiCalls tolerates missing fields", () => {
+    assert.equal(core.estimateScanApiCalls({}), 0);
+});
+
 test("pickLatestApiVersion chooses the highest version numerically, not by order", () => {
     const versions = [
         { label: "Spring '23", url: "/services/data/v57.0", version: "57.0" },
