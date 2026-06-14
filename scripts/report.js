@@ -162,11 +162,11 @@
         });
     }
 
-    async function toolingQuery(soql, allowRetry = true) {
+    // Low-level GET against an absolute Tooling path (a /services/data/... URL or
+    // a nextRecordsUrl), with a single 401-triggered session refresh.
+    async function toolingFetch(path, allowRetry = true) {
         const session = await getReportSession();
-        const version = state.apiVersion || DEFAULT_API_VERSION;
-        const endpoint = `https://${state.host}/services/data/${version}/tooling/query/?q=${encodeURIComponent(soql)}`;
-        const response = await fetch(endpoint, {
+        const response = await fetch(`https://${state.host}${path}`, {
             method: "GET",
             headers: {
                 "Content-Type": "application/json",
@@ -175,13 +175,33 @@
         });
         if (isAuthFailureStatus(response.status) && allowRetry) {
             state.session = null; // force a fresh session, then retry once
-            return toolingQuery(soql, false);
+            return toolingFetch(path, false);
         }
         if (!response.ok) {
             const text = await response.text();
             throw new Error(`Salesforce API error (${response.status}): ${text}`);
         }
         return response.json();
+    }
+
+    function toolingQuery(soql) {
+        const version = state.apiVersion || DEFAULT_API_VERSION;
+        return toolingFetch(`/services/data/${version}/tooling/query/?q=${encodeURIComponent(soql)}`);
+    }
+
+    // Runs a Tooling query and follows nextRecordsUrl to completion, returning all
+    // records. The query API pages at ~2000 rows; without this a heavily-referenced
+    // field would silently drop dependencies beyond the first page.
+    async function toolingQueryAllRecords(soql) {
+        let page = await toolingQuery(soql);
+        const records = Array.isArray(page.records) ? page.records.slice() : [];
+        while (!page.done && page.nextRecordsUrl) {
+            page = await toolingFetch(page.nextRecordsUrl);
+            if (Array.isArray(page.records)) {
+                records.push(...page.records);
+            }
+        }
+        return records;
     }
 
     // Resolves the field to its CustomField id, then lists the metadata that
@@ -199,8 +219,8 @@
         if (!fieldId) {
             return { dependencies: [], message: "This field was not found in the org's custom field metadata." };
         }
-        const depResponse = await toolingQuery(buildDependencyQuery(fieldId));
-        const dependencies = groupDependencies(depResponse.records || []);
+        const depRecords = await toolingQueryAllRecords(buildDependencyQuery(fieldId));
+        const dependencies = groupDependencies(depRecords);
         if (!dependencies.length) {
             return {
                 dependencies: [],
