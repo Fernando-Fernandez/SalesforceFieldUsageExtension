@@ -378,6 +378,34 @@ th[data-sort-direction="desc"]::after {
     margin-top: 0.4rem;
 }
 
+.summary-recordtypes {
+    margin-top: 0.35rem;
+}
+
+.summary-recordtypes__button {
+    margin-top: 0.2rem;
+}
+
+.summary-recordtypes__output {
+    margin-top: 0.35rem;
+}
+
+.distribution-recordtypes {
+    margin-top: 1rem;
+    padding-top: 0.75rem;
+    border-top: 1px solid #eef1f7;
+}
+
+.distribution-recordtypes h4 {
+    margin: 0 0 0.4rem;
+    font-size: 0.95rem;
+    color: #2f3c4d;
+}
+
+.distribution-recordtypes__output {
+    margin-top: 0.5rem;
+}
+
 .picklist-health {
     margin-top: 1rem;
     padding-top: 0.75rem;
@@ -404,6 +432,31 @@ th[data-sort-direction="desc"]::after {
 
 .summary-dependencies__output .distribution-dependencies__list {
     padding-left: 1rem;
+}
+
+.recordtype-usage__table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.9rem;
+}
+
+.recordtype-usage__table th,
+.recordtype-usage__table td {
+    padding: 0.35rem 0.5rem;
+    border: 1px solid #e1e5ee;
+    text-align: left;
+}
+
+.recordtype-usage__table th {
+    background: #f5f8ff;
+    font-weight: 600;
+    color: #2f3c4d;
+}
+
+.recordtype-usage__note {
+    margin: 0.2rem 0;
+    font-size: 0.85rem;
+    color: #5f6c80;
 }
 
 .timeline-chart {

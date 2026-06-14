@@ -146,7 +146,7 @@
             });
             renderFieldLists();
             updateProcessButtonState();
-            setStatus(`Restored your last selection for ${state.host}.`, "info");
+            setTransientStatus(`Restored your last selection for ${state.host}.`, "info");
         } catch (error) {
             console.warn("Unable to restore selections.", error);
         }
@@ -717,6 +717,23 @@
         statusEl.className = `status status-${type}`;
     }
 
+    function clearStatus() {
+        if (!statusEl) {
+            return;
+        }
+        statusEl.textContent = "";
+        statusEl.className = "status";
+    }
+
+    function setTransientStatus(message, type = "info", timeoutMs = 4000) {
+        setStatus(message, type);
+        window.setTimeout(() => {
+            if (statusEl && statusEl.textContent === message) {
+                clearStatus();
+            }
+        }, timeoutMs);
+    }
+
     function updateProcessButtonState() {
         if (!processSelectionsBtn) {
             return;
@@ -737,7 +754,7 @@
         if (!scanEstimateEl) {
             return;
         }
-        const objects = state.selectedSObjects;
+        const objects = getPendingTargetSObjects();
         const parts = [];
         if (objects.length) {
             const hasExplicit = objects.some((name) => (state.selectedFields.get(name) || []).length > 0);
@@ -760,6 +777,74 @@
         scanEstimateEl.textContent = parts.join(" • ");
     }
 
+    function getPendingTargetSObjects() {
+        if (state.selectedSObjects.length) {
+            return state.selectedSObjects.slice();
+        }
+        const match = resolveFilterMatch();
+        return match ? [match.name] : [];
+    }
+
+    function resolveFilterMatch() {
+        if (!sobjectFilterEl) {
+            return null;
+        }
+        const term = sobjectFilterEl.value.trim().toLowerCase();
+        if (!term) {
+            return null;
+        }
+        return (
+            state.sobjects.find(
+                (obj) =>
+                    obj.name.toLowerCase() === term ||
+                    obj.label.toLowerCase() === term
+            ) || null
+        );
+    }
+
+    function estimateCallsForTargets(targetSObjects) {
+        if (!Array.isArray(targetSObjects) || !targetSObjects.length) {
+            return 0;
+        }
+        const hasExplicit = targetSObjects.some(
+            (name) => (state.selectedFields.get(name) || []).length > 0
+        );
+        const mode = hasExplicit ? "distribution" : "summary";
+        const fieldCount = targetSObjects.reduce((sum, name) => {
+            const selected = state.selectedFields.get(name) || [];
+            if (hasExplicit) {
+                return sum + selected.length;
+            }
+            const fields = state.fieldCache.get(name) || [];
+            return sum + fields.length;
+        }, 0);
+        return estimateScanApiCalls({ mode, sobjectCount: targetSObjects.length, fieldCount });
+    }
+
+    function getRemainingApiCalls() {
+        if (!state.apiUsage) {
+            return null;
+        }
+        return Math.max(state.apiUsage.limit - state.apiUsage.used, 0);
+    }
+
+    function maybeWarnAboutApiLimit(estimatedCalls) {
+        if (!Number.isFinite(estimatedCalls) || estimatedCalls <= 0) {
+            return true;
+        }
+        const remaining = getRemainingApiCalls();
+        if (remaining === null || estimatedCalls <= remaining) {
+            return true;
+        }
+        const proceed = window.confirm(
+            `This scan (~${estimatedCalls.toLocaleString()}) exceeds your remaining ${remaining.toLocaleString()} calls. Continue?`
+        );
+        if (!proceed) {
+            setStatus("Scan canceled before exceeding the daily API limit.", "warning");
+        }
+        return proceed;
+    }
+
     function setProcessStatus(message) {
         if (!processStatusEl) {
             return;
@@ -776,20 +861,7 @@
     async function handleProcessSelections() {
         setProcessStatus("");
 
-        const filterValue = sobjectFilterEl.value.trim();
-        const filterMatch = filterValue
-            ? state.sobjects.find(
-                  (obj) =>
-                      obj.name.toLowerCase() === filterValue.toLowerCase() ||
-                      obj.label.toLowerCase() === filterValue.toLowerCase()
-              )
-            : null;
-
-        const targetSObjects = state.selectedSObjects.length
-            ? state.selectedSObjects.slice()
-            : filterMatch
-            ? [filterMatch.name]
-            : [];
+        const targetSObjects = getPendingTargetSObjects();
 
         if (!targetSObjects.length) {
             setStatus("Select at least one SObject before processing.", "error");
@@ -803,6 +875,12 @@
             await ensureFieldsLoaded(targetSObjects);
         } catch (error) {
             setStatus(`Unable to load fields: ${error.message}`, "error");
+            setProcessStatus("");
+            return;
+        }
+
+        const estimatedCalls = estimateCallsForTargets(targetSObjects);
+        if (!maybeWarnAboutApiLimit(estimatedCalls)) {
             setProcessStatus("");
             return;
         }

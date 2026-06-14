@@ -56,7 +56,8 @@
         // fetched lazily from the background worker and kept only in memory.
         host: null,
         apiVersion: null,
-        session: null
+        session: null,
+        recordTypeCache: new Map()
     };
 
     document.addEventListener("DOMContentLoaded", init);
@@ -252,9 +253,9 @@
         });
     }
 
-    // Low-level GET against an absolute Tooling path (a /services/data/... URL or
-    // a nextRecordsUrl), with a single 401-triggered session refresh.
-    async function toolingFetch(path, allowRetry = true) {
+    // Low-level GET against an absolute REST path (Tooling or data) with a single
+    // 401-triggered session refresh.
+    async function apiFetch(path, allowRetry = true) {
         const session = await getReportSession();
         const response = await fetch(`https://${state.host}${path}`, {
             method: "GET",
@@ -265,13 +266,21 @@
         });
         if (isAuthFailureStatus(response.status) && allowRetry) {
             state.session = null; // force a fresh session, then retry once
-            return toolingFetch(path, false);
+            return apiFetch(path, false);
         }
         if (!response.ok) {
             const text = await response.text();
             throw new Error(`Salesforce API error (${response.status}): ${text}`);
         }
         return response.json();
+    }
+
+    function restFetch(path, allowRetry = true) {
+        return apiFetch(path, allowRetry);
+    }
+
+    function toolingFetch(path, allowRetry = true) {
+        return apiFetch(path, allowRetry);
     }
 
     function toolingQuery(soql) {
@@ -294,30 +303,100 @@
         return records;
     }
 
+    function restQuery(soql) {
+        const version = state.apiVersion || DEFAULT_API_VERSION;
+        return restFetch(`/services/data/${version}/query/?q=${encodeURIComponent(soql)}`);
+    }
+
+    async function restQueryAllRecords(soql) {
+        let page = await restQuery(soql);
+        const records = Array.isArray(page.records) ? page.records.slice() : [];
+        while (!page.done && page.nextRecordsUrl) {
+            page = await restFetch(page.nextRecordsUrl);
+            if (Array.isArray(page.records)) {
+                records.push(...page.records);
+            }
+        }
+        return records;
+    }
+
+    async function describeSObject(sobject) {
+        if (!sobject) {
+            return null;
+        }
+        const cache = state.recordTypeCache.get(sobject);
+        if (cache && cache.describe) {
+            return cache.describe;
+        }
+        const version = state.apiVersion || DEFAULT_API_VERSION;
+        const describe = await restFetch(`/services/data/${version}/sobjects/${sobject}/describe`);
+        state.recordTypeCache.set(sobject, {
+            ...(cache || {}),
+            describe
+        });
+        return describe;
+    }
+
+    async function ensureRecordTypeInfos(sobject) {
+        if (!sobject) {
+            return { infos: [], hasRecordTypes: false };
+        }
+        const cache = state.recordTypeCache.get(sobject);
+        if (cache && cache.recordTypeSummary) {
+            return cache.recordTypeSummary;
+        }
+        const describe = await describeSObject(sobject);
+        const infos = Array.isArray(describe?.recordTypeInfos)
+            ? describe.recordTypeInfos
+                  .filter((info) => info && info.recordTypeId && !info.master && info.available !== false)
+                  .map((info) => ({
+                      id: info.recordTypeId,
+                      label: info.name || info.label || info.developerName || info.recordTypeId
+                  }))
+            : [];
+        const summary = { infos, hasRecordTypes: infos.length > 0 };
+        state.recordTypeCache.set(sobject, {
+            ...(cache || {}),
+            recordTypeSummary: summary
+        });
+        return summary;
+    }
+
     // Resolves the field to its CustomField id, then lists the metadata that
     // references it. Returns { dependencies, message } where a message describes
     // why the list is empty (standard field, not found, or no references).
     async function fetchFieldDependencies(result) {
         const parsed = parseCustomFieldName(result.field);
         if (!parsed) {
-            return { dependencies: [], message: "Dependency analysis is available for custom fields only." };
+            return {
+                dependencies: [],
+                message: "Dependency analysis is available for custom fields only.",
+                lastModifiedDate: null
+            };
         }
         const idResponse = await toolingQuery(
             buildCustomFieldIdQuery(result.sobject, parsed.developerName, parsed.namespace)
         );
-        const fieldId = extractFirstId(idResponse);
+        const fieldRecord = Array.isArray(idResponse?.records) ? idResponse.records[0] : null;
+        const fieldId = fieldRecord?.Id || null;
+        const lastModifiedDate = fieldRecord?.LastModifiedDate || null;
         if (!fieldId) {
-            return { dependencies: [], message: "This field was not found in the org's custom field metadata." };
+            return {
+                dependencies: [],
+                message: "This field was not found in the org's custom field metadata.",
+                lastModifiedDate
+            };
         }
         const depRecords = await toolingQueryAllRecords(buildDependencyQuery(fieldId));
         const dependencies = groupDependencies(depRecords);
         if (!dependencies.length) {
             return {
                 dependencies: [],
-                message: "Not referenced by any tracked metadata. (The Dependency API is Beta and may miss some references.)"
+                message: "Not referenced by any tracked metadata. (The Dependency API is Beta and may miss some references.)",
+                lastModifiedDate
             };
         }
-        return { dependencies, message: "" };
+        return { dependencies, message: "", lastModifiedDate };
     }
 
     function renderMeta(timestamp) {
@@ -428,7 +507,7 @@
         output.className = "summary-dependencies__output";
 
         if (result.dependencyResult) {
-            renderSummaryDependencies(output, result.dependencyResult);
+            renderSummaryDependencies(output, result.dependencyResult, result);
             button.hidden = true;
         }
 
@@ -438,7 +517,7 @@
             try {
                 const res = await fetchFieldDependencies(result);
                 result.dependencyResult = res;
-                renderSummaryDependencies(output, res);
+                renderSummaryDependencies(output, res, result);
                 button.hidden = true;
             } catch (error) {
                 output.innerHTML = "";
@@ -449,16 +528,49 @@
 
         cell.appendChild(button);
         cell.appendChild(output);
+
+        const recordTypeControls = buildSummaryRecordTypeControls(result);
+        if (recordTypeControls) {
+            cell.appendChild(recordTypeControls);
+        }
         return cell;
     }
 
-    function renderSummaryDependencies(output, res) {
+    function renderSummaryDependencies(output, res, result) {
         output.innerHTML = "";
-        if (res.message) {
+        const dependencies = Array.isArray(res?.dependencies) ? res.dependencies : [];
+        if (res?.message) {
             appendDependencyNote(output, res.message);
         } else {
-            output.appendChild(buildDependencyList(res.dependencies));
+            output.appendChild(buildDependencyList(dependencies));
         }
+        appendLastModifiedInsights(output, res?.lastModifiedDate, {
+            nonNullPercentage: result?.nonNullPercentage,
+            dependencyCount: dependencies.length
+        });
+    }
+
+    function buildSummaryRecordTypeControls(result) {
+        if (!state.host) {
+            return null;
+        }
+        const container = document.createElement("div");
+        container.className = "summary-recordtypes";
+
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "summary-recordtypes__button summary-dependencies__button";
+        button.textContent = "Show usage by Record Type";
+        button.hidden = true;
+
+        const output = document.createElement("div");
+        output.className = "summary-recordtypes__output";
+
+        container.appendChild(button);
+        container.appendChild(output);
+
+        setupRecordTypeUsageControls({ container, button, output, result, variant: "summary" });
+        return container;
     }
 
     function setStatus(message, type) {
@@ -735,6 +847,11 @@
                 card.appendChild(picklistEl);
             }
 
+            const recordTypeEl = buildRecordTypeUsageSection(result);
+            if (recordTypeEl) {
+                card.appendChild(recordTypeEl);
+            }
+
             card.appendChild(buildDependencySection(result));
 
             distributionContainerEl.appendChild(card);
@@ -855,13 +972,18 @@
             button.disabled = true;
             appendDependencyNote(output, "Looking up references…", true);
             try {
-                const { dependencies, message } = await fetchFieldDependencies(result);
+                const res = await fetchFieldDependencies(result);
+                const dependencies = Array.isArray(res.dependencies) ? res.dependencies : [];
                 output.innerHTML = "";
-                if (message) {
-                    appendDependencyNote(output, message);
+                if (res.message) {
+                    appendDependencyNote(output, res.message);
                 } else {
                     output.appendChild(buildDependencyList(dependencies));
                 }
+                appendLastModifiedInsights(output, res.lastModifiedDate, {
+                    nonNullPercentage: result?.nonNullPercentage,
+                    dependencyCount: dependencies.length
+                });
                 button.hidden = true;
             } catch (error) {
                 output.innerHTML = "";
@@ -883,6 +1005,259 @@
         note.className = "distribution-dependencies__note";
         note.textContent = text;
         parent.appendChild(note);
+    }
+
+    function appendLastModifiedInsights(parent, lastModifiedDate, context = {}) {
+        if (!parent || !lastModifiedDate) {
+            return;
+        }
+        const info = describeRelativeTimestamp(lastModifiedDate);
+        if (!info) {
+            return;
+        }
+        appendDependencyNote(parent, `Last modified ${info.relative} (${info.absolute}).`);
+        const nonNull = Number(context.nonNullPercentage);
+        const dependencyCount = Number(context.dependencyCount) || 0;
+        const isZeroUsage = Number.isFinite(nonNull) && nonNull <= 0;
+        if (isZeroUsage && dependencyCount === 0) {
+            appendDependencyNote(
+                parent,
+                `0% populated and untouched for ${info.duration}; no metadata references detected.`
+            );
+        }
+    }
+
+    function describeRelativeTimestamp(value) {
+        if (!value) {
+            return null;
+        }
+        const date = new Date(value);
+        if (Number.isNaN(date.getTime())) {
+            return null;
+        }
+        const now = new Date();
+        let diffMs = now.getTime() - date.getTime();
+        if (diffMs < 0) {
+            diffMs = 0;
+        }
+        const dayMs = 24 * 60 * 60 * 1000;
+        const diffDays = Math.floor(diffMs / dayMs);
+        if (diffDays < 1) {
+            return {
+                relative: "today",
+                duration: "less than a day",
+                absolute: date.toLocaleDateString()
+            };
+        }
+        if (diffDays < 30) {
+            const days = Math.max(diffDays, 1);
+            const label = `${days} day${days === 1 ? "" : "s"}`;
+            return {
+                relative: `${label} ago`,
+                duration: label,
+                absolute: date.toLocaleDateString()
+            };
+        }
+        const diffMonths = Math.floor(diffDays / 30);
+        if (diffMonths < 12) {
+            const months = Math.max(diffMonths, 1);
+            const label = `${months} month${months === 1 ? "" : "s"}`;
+            return {
+                relative: `${label} ago`,
+                duration: label,
+                absolute: date.toLocaleDateString()
+            };
+        }
+        const years = Math.max(Math.floor(diffMonths / 12), 1);
+        const label = `${years} year${years === 1 ? "" : "s"}`;
+        return {
+            relative: `${label} ago`,
+            duration: label,
+            absolute: date.toLocaleDateString()
+        };
+    }
+
+    function buildRecordTypeUsageSection(result) {
+        const container = document.createElement("div");
+        container.className = "distribution-recordtypes";
+
+        const title = document.createElement("h4");
+        title.textContent = "Field Usage by Record Type";
+        container.appendChild(title);
+
+        if (!state.host) {
+            appendRecordTypeNote(container, "Reopen the report from the popup to load record-type usage.");
+            return container;
+        }
+
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "distribution-recordtypes__button distribution-dependencies__button";
+        button.textContent = "Show usage by Record Type";
+        button.hidden = true;
+
+        const output = document.createElement("div");
+        output.className = "distribution-recordtypes__output";
+
+        container.appendChild(button);
+        container.appendChild(output);
+
+        setupRecordTypeUsageControls({ container, button, output, result, variant: "distribution" });
+        return container;
+    }
+
+    function setupRecordTypeUsageControls({ container, button, output, result, variant }) {
+        ensureRecordTypeInfos(result.sobject)
+            .then(({ hasRecordTypes }) => {
+                if (!hasRecordTypes) {
+                    if (variant === "distribution") {
+                        appendRecordTypeNote(output, "This object has no record types defined.");
+                        button.remove();
+                    } else {
+                        container.remove();
+                    }
+                    return;
+                }
+                button.hidden = false;
+            })
+            .catch((error) => {
+                if (variant === "distribution") {
+                    appendRecordTypeNote(output, `Record-type metadata unavailable: ${error.message || error}`);
+                    button.remove();
+                } else {
+                    container.remove();
+                }
+            });
+
+        button.addEventListener("click", async () => {
+            button.disabled = true;
+            appendRecordTypeNote(output, "Loading usage by record type…", true);
+            try {
+                if (!result.recordTypeUsage) {
+                    result.recordTypeUsage = await fetchRecordTypeUsage(result);
+                }
+                renderRecordTypeUsage(output, result.recordTypeUsage, result);
+                button.hidden = true;
+            } catch (error) {
+                appendRecordTypeNote(output, `Record-type usage unavailable: ${error.message || error}`, true);
+                button.disabled = false;
+            }
+        });
+    }
+
+    function appendRecordTypeNote(parent, text, clear) {
+        if (clear) {
+            parent.innerHTML = "";
+        }
+        const note = document.createElement("p");
+        note.className = "recordtype-usage__note";
+        note.textContent = text;
+        parent.appendChild(note);
+    }
+
+    function renderRecordTypeUsage(container, usage, result) {
+        container.innerHTML = "";
+        const rows = Array.isArray(usage?.rows) ? usage.rows : [];
+        if (!rows.length) {
+            appendRecordTypeNote(container, usage?.message || "No record-type data returned for this field.");
+            return;
+        }
+
+        const table = document.createElement("table");
+        table.className = "recordtype-usage__table";
+        const fieldLabel = result.fieldLabel || result.field || "Field";
+        table.innerHTML = `
+            <thead>
+                <tr>
+                    <th>Record Type</th>
+                    <th>Total Records</th>
+                    <th>${fieldLabel} Populated</th>
+                    <th>% Populated</th>
+                </tr>
+            </thead>
+        `;
+        const tbody = document.createElement("tbody");
+        rows.forEach((row) => {
+            const tr = document.createElement("tr");
+            tr.appendChild(createCell(row.label));
+            tr.appendChild(createCell(formatNumber(row.total)));
+            tr.appendChild(createCell(formatNumber(row.populated)));
+            tr.appendChild(createCell(formatPercentage(row.percentage)));
+            tbody.appendChild(tr);
+        });
+        table.appendChild(tbody);
+        container.appendChild(table);
+    }
+
+    async function fetchRecordTypeUsage(result) {
+        if (!state.host) {
+            throw new Error("Connection info unavailable. Reopen the report from the popup.");
+        }
+        const { infos, hasRecordTypes } = await ensureRecordTypeInfos(result.sobject);
+        if (!hasRecordTypes) {
+            return { rows: [], message: "This object has no record types." };
+        }
+
+        const [totals, populated] = await Promise.all([
+            restQueryAllRecords(`SELECT RecordTypeId, COUNT(Id) cnt FROM ${result.sobject} GROUP BY RecordTypeId`),
+            restQueryAllRecords(
+                `SELECT RecordTypeId, COUNT(Id) cnt FROM ${result.sobject} WHERE ${result.field} != null GROUP BY RecordTypeId`
+            )
+        ]);
+
+        const totalMap = buildRecordTypeCountMap(totals);
+        const populatedMap = buildRecordTypeCountMap(populated);
+        const ids = new Set([
+            ...infos.map((info) => info.id),
+            ...Array.from(totalMap.keys()),
+            ...Array.from(populatedMap.keys())
+        ]);
+
+        const rows = Array.from(ids)
+            .map((id) => {
+                const total = totalMap.get(id) || 0;
+                const populatedCount = populatedMap.get(id) || 0;
+                return {
+                    id,
+                    label: formatRecordTypeLabel(id, infos),
+                    total,
+                    populated: populatedCount,
+                    percentage: total > 0 ? populatedCount / total : 0
+                };
+            })
+            .sort((a, b) => (b.populated || 0) - (a.populated || 0));
+
+        return {
+            rows,
+            message: rows.length ? "" : "No records matched this field in the current org."
+        };
+    }
+
+    function buildRecordTypeCountMap(records) {
+        const map = new Map();
+        (records || []).forEach((record) => {
+            const recordTypeId = record.RecordTypeId || record.recordtypeid || null;
+            const raw =
+                record.expr0 ??
+                record.cnt ??
+                record.COUNT ??
+                record.total ??
+                record.count ??
+                0;
+            const count = Number(raw);
+            if (Number.isFinite(count)) {
+                map.set(recordTypeId, count);
+            }
+        });
+        return map;
+    }
+
+    function formatRecordTypeLabel(id, infos) {
+        if (!id) {
+            return "— (No Record Type)";
+        }
+        const match = infos.find((info) => info.id === id);
+        return match?.label || id;
     }
 
     function buildDependencyList(groups) {

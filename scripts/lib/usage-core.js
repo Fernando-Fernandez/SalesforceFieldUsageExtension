@@ -406,7 +406,7 @@
             ? "NamespacePrefix = '" + escapeSoqlLiteral(namespace) + "'"
             : "NamespacePrefix = null";
         return (
-            "SELECT Id FROM CustomField WHERE EntityDefinition.QualifiedApiName = '" +
+            "SELECT Id, LastModifiedDate FROM CustomField WHERE EntityDefinition.QualifiedApiName = '" +
             escapeSoqlLiteral(object) +
             "' AND DeveloperName = '" +
             escapeSoqlLiteral(developerName) +
