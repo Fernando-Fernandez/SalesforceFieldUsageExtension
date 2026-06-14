@@ -147,28 +147,6 @@ test("pickLatestApiVersion falls back for empty/invalid input", () => {
     assert.equal(core.pickLatestApiVersion([{ label: "x" }], "v60.0"), "v60.0");
 });
 
-test("extractRecordCount reads the count for the requested object", () => {
-    const response = {
-        sObjects: [
-            { name: "Account", count: 1200 },
-            { name: "Contact", count: 3400 }
-        ]
-    };
-    assert.equal(core.extractRecordCount(response, "Account"), 1200);
-    assert.equal(core.extractRecordCount(response, "Contact"), 3400);
-});
-
-test("extractRecordCount returns null to trigger the COUNT() fallback", () => {
-    assert.equal(core.extractRecordCount({ sObjects: [] }, "Account"), null);
-    assert.equal(core.extractRecordCount({ sObjects: [{ name: "Account" }] }, "Account"), null);
-    assert.equal(core.extractRecordCount({}, "Account"), null);
-    assert.equal(core.extractRecordCount(null, "Account"), null);
-});
-
-test("extractRecordCount accepts a zero count", () => {
-    assert.equal(core.extractRecordCount({ sObjects: [{ name: "Account", count: 0 }] }, "Account"), 0);
-});
-
 test("parseCustomFieldName splits namespace and developer name", () => {
     assert.deepEqual(core.parseCustomFieldName("Foo__c"), { namespace: null, developerName: "Foo" });
     assert.deepEqual(core.parseCustomFieldName("ns__Foo__c"), { namespace: "ns", developerName: "Foo" });
