@@ -228,7 +228,7 @@
         results.forEach((result) => {
             const row = document.createElement("tr");
             row.appendChild(createCell(result.sobjectLabel));
-            row.appendChild(createCell(result.fieldLabel));
+            row.appendChild(createSummaryFieldCell(result));
             row.appendChild(createCell(formatNumber(result.sobjectCount)));
             row.appendChild(createCell(formatNumber(result.nonNullCount)));
             row.appendChild(createCell(formatPercentage(result.nonNullPercentage)));
@@ -241,6 +241,60 @@
         const cell = document.createElement("td");
         cell.textContent = text ?? "—";
         return cell;
+    }
+
+    // Field cell for the summary table. For a custom field (with connection info
+    // available) the name is a button that loads its metadata dependencies inline.
+    // The fetched result is cached on the result object so it survives re-sorts.
+    function createSummaryFieldCell(result) {
+        const cell = document.createElement("td");
+        const label = result.fieldLabel ?? result.field ?? "—";
+
+        if (!state.host || !customFieldDeveloperName(result.field)) {
+            cell.textContent = label;
+            return cell;
+        }
+
+        const link = document.createElement("button");
+        link.type = "button";
+        link.className = "summary-field-link";
+        link.textContent = label;
+        link.title = "Show where this field is used";
+
+        const output = document.createElement("div");
+        output.className = "summary-dependencies__output";
+
+        if (result.dependencyResult) {
+            renderSummaryDependencies(output, result.dependencyResult);
+            link.disabled = true;
+        }
+
+        link.addEventListener("click", async () => {
+            link.disabled = true;
+            appendDependencyNote(output, "Looking up references…", true);
+            try {
+                const res = await fetchFieldDependencies(result);
+                result.dependencyResult = res;
+                renderSummaryDependencies(output, res);
+            } catch (error) {
+                output.innerHTML = "";
+                appendDependencyNote(output, `Dependency analysis unavailable: ${error.message || error}`);
+                link.disabled = false;
+            }
+        });
+
+        cell.appendChild(link);
+        cell.appendChild(output);
+        return cell;
+    }
+
+    function renderSummaryDependencies(output, res) {
+        output.innerHTML = "";
+        if (res.message) {
+            appendDependencyNote(output, res.message);
+        } else {
+            output.appendChild(buildDependencyList(res.dependencies));
+        }
     }
 
     function setStatus(message, type) {

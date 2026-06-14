@@ -312,6 +312,36 @@ th[data-sort-direction="desc"]::after {
     margin-bottom: 0.25rem;
 }
 
+.summary-field-link {
+    cursor: pointer;
+    padding: 0;
+    border: none;
+    background: none;
+    color: #1b6fd6;
+    font: inherit;
+    text-align: left;
+    text-decoration: underline;
+    text-decoration-style: dotted;
+}
+
+.summary-field-link:hover {
+    text-decoration-style: solid;
+}
+
+.summary-field-link:disabled {
+    cursor: default;
+    color: #2f3c4d;
+    text-decoration: none;
+}
+
+.summary-dependencies__output {
+    margin-top: 0.4rem;
+}
+
+.summary-dependencies__output .distribution-dependencies__list {
+    padding-left: 1rem;
+}
+
 .timeline-chart {
     margin-bottom: 0.8rem;
     background: #fff;

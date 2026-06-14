@@ -411,8 +411,7 @@
                 name: field.name,
                 label: field.label || field.name,
                 type: field.type,
-                groupable: !!field.groupable,
-                custom: !!field.custom
+                groupable: !!field.groupable
             }))
             .sort((a, b) => a.label.localeCompare(b.label));
 
@@ -737,9 +736,7 @@
                     sobject,
                     sobjectLabel,
                     field,
-                    fieldLabel,
-                    custom: false,
-                    recordCount: null,
+                    fieldLabel,                    recordCount: null,
                     rows: [],
                     timeline: [],
                     timelineMessage: "",
@@ -754,9 +751,7 @@
                     sobject,
                     sobjectLabel,
                     field,
-                    fieldLabel,
-                    custom: !!fieldMeta.custom,
-                    recordCount: null,
+                    fieldLabel,                    recordCount: null,
                     rows: [],
                     timeline: [],
                     timelineMessage: "",
@@ -786,9 +781,7 @@
                     sobject,
                     sobjectLabel,
                     field,
-                    fieldLabel,
-                    custom: !!fieldMeta.custom,
-                    recordCount: totalRecords,
+                    fieldLabel,                    recordCount: totalRecords,
                     rows: distribution.rows,
                     truncated: !!distribution.truncated,
                     distinctLimit: distribution.distinctLimit ?? null,
@@ -802,9 +795,7 @@
                     sobject,
                     sobjectLabel,
                     field,
-                    fieldLabel,
-                    custom: !!fieldMeta.custom,
-                    recordCount: null,
+                    fieldLabel,                    recordCount: null,
                     rows: [],
                     timeline: [],
                     timelineMessage: "",
