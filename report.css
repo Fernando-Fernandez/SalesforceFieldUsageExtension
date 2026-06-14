@@ -312,26 +312,28 @@ th[data-sort-direction="desc"]::after {
     margin-bottom: 0.25rem;
 }
 
-.summary-field-link {
+.summary-field-name {
+    margin-bottom: 0.3rem;
+}
+
+.summary-dependencies__button {
     cursor: pointer;
-    padding: 0;
-    border: none;
-    background: none;
+    font-size: 0.78rem;
+    padding: 0.2rem 0.5rem;
+    border: 1px solid #4c9ffe;
+    border-radius: 4px;
+    background: #f0f7ff;
     color: #1b6fd6;
-    font: inherit;
-    text-align: left;
-    text-decoration: underline;
-    text-decoration-style: dotted;
+    white-space: nowrap;
 }
 
-.summary-field-link:hover {
-    text-decoration-style: solid;
+.summary-dependencies__button:hover {
+    background: #e2efff;
 }
 
-.summary-field-link:disabled {
+.summary-dependencies__button:disabled {
     cursor: default;
-    color: #2f3c4d;
-    text-decoration: none;
+    opacity: 0.6;
 }
 
 .summary-dependencies__output {

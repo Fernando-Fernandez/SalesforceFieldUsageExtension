@@ -243,47 +243,51 @@
         return cell;
     }
 
-    // Field cell for the summary table. For a custom field (with connection info
-    // available) the name is a button that loads its metadata dependencies inline.
-    // The fetched result is cached on the result object so it survives re-sorts.
+    // Field cell for the summary table: the field name as plain text plus, for a
+    // custom field (with connection info available), a small button that loads its
+    // metadata dependencies inline. The fetched result is cached on the result
+    // object so it survives re-sorts.
     function createSummaryFieldCell(result) {
         const cell = document.createElement("td");
-        const label = result.fieldLabel ?? result.field ?? "—";
+
+        const name = document.createElement("div");
+        name.className = "summary-field-name";
+        name.textContent = result.fieldLabel ?? result.field ?? "—";
+        cell.appendChild(name);
 
         if (!state.host || !customFieldDeveloperName(result.field)) {
-            cell.textContent = label;
             return cell;
         }
 
-        const link = document.createElement("button");
-        link.type = "button";
-        link.className = "summary-field-link";
-        link.textContent = label;
-        link.title = "Show where this field is used";
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "summary-dependencies__button";
+        button.textContent = "Where is this field used?";
 
         const output = document.createElement("div");
         output.className = "summary-dependencies__output";
 
         if (result.dependencyResult) {
             renderSummaryDependencies(output, result.dependencyResult);
-            link.disabled = true;
+            button.hidden = true;
         }
 
-        link.addEventListener("click", async () => {
-            link.disabled = true;
+        button.addEventListener("click", async () => {
+            button.disabled = true;
             appendDependencyNote(output, "Looking up references…", true);
             try {
                 const res = await fetchFieldDependencies(result);
                 result.dependencyResult = res;
                 renderSummaryDependencies(output, res);
+                button.hidden = true;
             } catch (error) {
                 output.innerHTML = "";
                 appendDependencyNote(output, `Dependency analysis unavailable: ${error.message || error}`);
-                link.disabled = false;
+                button.disabled = false;
             }
         });
 
-        cell.appendChild(link);
+        cell.appendChild(button);
         cell.appendChild(output);
         return cell;
     }
