@@ -25,7 +25,6 @@
         extractCompositeError,
         isAuthFailureStatus,
         pickLatestApiVersion,
-        extractRecordCount,
         normalizeTimelineRows
     } = globalThis.SFUsageCore;
 
@@ -969,34 +968,18 @@
         if (recordCountCache.has(sobject)) {
             return recordCountCache.get(sobject);
         }
-        // Prefer the recordCount limits resource: it returns instantly even for
-        // multi-million-row objects, where SELECT COUNT() can time out. Fall back
-        // to an exact COUNT() when the object is absent from the response (custom
-        // objects/metadata types are not always listed) or the call fails.
-        let total = await fetchApproximateRecordCount(sobject);
-        if (total === null) {
-            total = await fetchExactRecordCount(sobject);
-        }
-        recordCountCache.set(sobject, total);
-        return total;
-    }
-
-    async function fetchApproximateRecordCount(sobject) {
-        try {
-            const endpoint = `https://${state.host}/services/data/${state.apiVersion}/limits/recordCount?sObjects=${encodeURIComponent(sobject)}`;
-            const data = await authenticatedFetch(endpoint);
-            return extractRecordCount(data, sobject);
-        } catch (error) {
-            console.warn(`recordCount unavailable for ${sobject}; falling back to COUNT().`, error);
-            return null;
-        }
-    }
-
-    async function fetchExactRecordCount(sobject) {
+        // Must be exact: distribution percentages divide by this total and the
+        // non-groupable NOT NULL bucket is (total - exact null count), so an
+        // approximate /limits/recordCount would skew percentages and could even
+        // drive NOT NULL to 0 when it falls below the null count. An exact COUNT()
+        // is also no costlier here in practice — the same object is already hit by
+        // the heavier GROUP BY / null-count aggregates below.
         const query = `SELECT COUNT() FROM ${sobject}`;
         const endpoint = `https://${state.host}/services/data/${state.apiVersion}/query/?q=${encodeURIComponent(query)}`;
         const data = await authenticatedFetch(endpoint);
-        return typeof data.totalSize === "number" ? data.totalSize : 0;
+        const total = typeof data.totalSize === "number" ? data.totalSize : 0;
+        recordCountCache.set(sobject, total);
+        return total;
     }
 
     async function fetchFieldDistribution(sobject, field, totalRecords, fieldMeta) {
