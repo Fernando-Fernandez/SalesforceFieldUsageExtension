@@ -10,6 +10,20 @@ body {
     background-color: #f4f6f9;
 }
 
+.download-csv-btn {
+    cursor: pointer;
+    font-size: 0.9rem;
+    padding: 0.45rem 0.9rem;
+    border: 1px solid #1b6fd6;
+    border-radius: 4px;
+    background: #1b6fd6;
+    color: #ffffff;
+}
+
+.download-csv-btn:hover {
+    background: #155bb0;
+}
+
 main {
     padding: 2rem;
     max-width: 1200px;
@@ -338,6 +352,30 @@ th[data-sort-direction="desc"]::after {
 
 .summary-dependencies__output {
     margin-top: 0.4rem;
+}
+
+.picklist-health {
+    margin-top: 1rem;
+    padding-top: 0.75rem;
+    border-top: 1px solid #eef1f7;
+}
+
+.picklist-health h4 {
+    margin: 0 0 0.5rem;
+    font-size: 0.95rem;
+    color: #2f3c4d;
+}
+
+.picklist-health__note {
+    margin: 0 0 0.4rem;
+    font-size: 0.85rem;
+    color: #5f6c80;
+}
+
+.picklist-health__group {
+    margin: 0 0 0.4rem;
+    font-size: 0.9rem;
+    color: #2f3c4d;
 }
 
 .summary-dependencies__output .distribution-dependencies__list {
