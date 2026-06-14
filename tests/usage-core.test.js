@@ -18,6 +18,25 @@ test("chunkArray is safe for empty/invalid input", () => {
     assert.deepEqual(core.chunkArray([1, 2, 3], 0), []);
 });
 
+test("toCsv joins headers and rows with CRLF", () => {
+    const csv = core.toCsv(["A", "B"], [[1, 2], [3, 4]]);
+    assert.equal(csv, "A,B\r\n1,2\r\n3,4");
+});
+
+test("toCsv quotes cells containing comma, quote, or newline and doubles quotes", () => {
+    const csv = core.toCsv(["X"], [["a,b"], ['he said "hi"'], ["line1\nline2"]]);
+    assert.equal(csv, 'X\r\n"a,b"\r\n"he said ""hi"""\r\n"line1\nline2"');
+});
+
+test("toCsv renders null/undefined as empty cells", () => {
+    assert.equal(core.toCsv(["A", "B", "C"], [[null, undefined, 0]]), "A,B,C\r\n,,0");
+});
+
+test("toCsv handles empty/missing rows", () => {
+    assert.equal(core.toCsv(["A", "B"], []), "A,B");
+    assert.equal(core.toCsv(["A"], null), "A");
+});
+
 test("formatNumber renders an em dash for nullish/NaN", () => {
     assert.equal(core.formatNumber(null), "—");
     assert.equal(core.formatNumber(undefined), "—");

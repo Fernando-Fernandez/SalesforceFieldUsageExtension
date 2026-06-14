@@ -19,6 +19,21 @@
         return result;
     }
 
+    // Builds an RFC 4180 CSV string from a header array and an array of row arrays.
+    // Cells containing a comma, quote, CR, or LF are quoted with embedded quotes
+    // doubled; null/undefined become empty cells. Rows are CRLF-separated.
+    function toCsv(headers, rows) {
+        const escapeCell = (value) => {
+            const text = value === null || value === undefined ? "" : String(value);
+            return /[",\r\n]/.test(text) ? '"' + text.replace(/"/g, '""') + '"' : text;
+        };
+        const lines = [(headers || []).map(escapeCell).join(",")];
+        (rows || []).forEach((row) => {
+            lines.push((row || []).map(escapeCell).join(","));
+        });
+        return lines.join("\r\n");
+    }
+
     function formatNumber(value) {
         if (value === null || value === undefined) {
             return "—";
@@ -491,6 +506,7 @@
 
     const api = {
         chunkArray,
+        toCsv,
         formatNumber,
         formatPercentage,
         normalizePercentage,

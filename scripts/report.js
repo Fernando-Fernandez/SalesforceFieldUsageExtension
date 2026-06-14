@@ -7,6 +7,7 @@
     // rest of this file reads unchanged.
     const {
         chunkArray,
+        toCsv,
         formatNumber,
         formatPercentage,
         normalizePercentage,
@@ -37,6 +38,7 @@
     const distributionContainerEl = document.getElementById("distributionTables");
     const summaryTimelineSectionEl = document.getElementById("summaryTimelineSection");
     const summaryTimelineContainerEl = document.getElementById("summaryTimelineCards");
+    const downloadCsvBtn = document.getElementById("downloadCsvBtn");
 
     const state = {
         results: [],
@@ -89,6 +91,7 @@
                 }
                 tableSectionEl.hidden = true;
                 clearStatus();
+                enableCsvDownload();
                 return;
             }
 
@@ -104,10 +107,84 @@
             renderSummaryTimelines(state.summaryTimeline);
             clearStatus();
             tableSectionEl.hidden = false;
+            enableCsvDownload();
         } catch (error) {
             console.error("Unable to load report", error);
             setStatus(error.message || "Unable to load report.", "error");
         }
+    }
+
+    function enableCsvDownload() {
+        if (!downloadCsvBtn) {
+            return;
+        }
+        downloadCsvBtn.hidden = false;
+        downloadCsvBtn.onclick = () => {
+            const { csv, filename } = buildCsv();
+            downloadCsv(filename, csv);
+        };
+    }
+
+    // Builds the CSV for the current report mode: flattened value rows for the
+    // distribution report, or the field-summary table for the summary report.
+    function buildCsv() {
+        const stamp = new Date().toISOString().slice(0, 10);
+        if (state.mode === "distribution") {
+            const headers = ["SObject", "Field", "Value", "Value Count", "Percent"];
+            const rows = [];
+            state.results.forEach((result) => {
+                const distributionRows = Array.isArray(result.rows) ? result.rows : [];
+                if (!distributionRows.length) {
+                    rows.push([result.sobjectLabel || result.sobject, result.fieldLabel || result.field, "", "", ""]);
+                    return;
+                }
+                distributionRows.forEach((row) => {
+                    rows.push([
+                        result.sobjectLabel || result.sobject,
+                        result.fieldLabel || result.field,
+                        formatDistributionValue(row.value),
+                        row.count,
+                        csvPercent(row.percentage)
+                    ]);
+                });
+            });
+            return { csv: toCsv(headers, rows), filename: `field-usage-distribution-${stamp}.csv` };
+        }
+        const headers = [
+            "SObject",
+            "Field",
+            "SObject Count",
+            "Estimated Non-Null Count",
+            "Estimated Percent Non-Null"
+        ];
+        const rows = state.results.map((result) => [
+            result.sobjectLabel || result.sobject,
+            result.fieldLabel || result.field,
+            result.sobjectCount,
+            result.nonNullCount,
+            csvPercent(result.nonNullPercentage)
+        ]);
+        return { csv: toCsv(headers, rows), filename: `field-usage-summary-${stamp}.csv` };
+    }
+
+    // Renders a 0..1 ratio as a plain numeric percent (e.g. 0.75 -> "75.00") so the
+    // CSV stays analysis-friendly in a spreadsheet; blank for non-numeric.
+    function csvPercent(value) {
+        const numeric = typeof value === "number" ? value : Number(value);
+        return Number.isFinite(numeric) ? (numeric * 100).toFixed(2) : "";
+    }
+
+    function downloadCsv(filename, csv) {
+        // Prepend a UTF-8 BOM so Excel reads non-ASCII values correctly.
+        const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
+        const url = URL.createObjectURL(blob);
+        const anchor = document.createElement("a");
+        anchor.href = url;
+        anchor.download = filename;
+        document.body.appendChild(anchor);
+        anchor.click();
+        anchor.remove();
+        URL.revokeObjectURL(url);
     }
 
     function requestReportData(reportId) {
