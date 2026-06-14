@@ -1,6 +1,24 @@
 (function () {
     const GET_REPORT_DATA = "getReportData";
 
+    // Pure data-transform helpers live in scripts/lib/usage-core.js (loaded before
+    // this script and unit-tested under node:test). Pull them in as locals so the
+    // rest of this file reads unchanged.
+    const {
+        chunkArray,
+        formatNumber,
+        formatPercentage,
+        normalizePercentage,
+        formatDistributionValue,
+        getSortValue,
+        sortResults,
+        formatTimelinePeriod,
+        getTimelinePeriods,
+        getTimelineValues,
+        buildTimelineGroupMap,
+        getTimelineColor
+    } = globalThis.SFUsageCore;
+
     const statusEl = document.getElementById("reportStatus");
     const tableSectionEl = document.getElementById("reportTableSection");
     const tableBodyEl = document.getElementById("reportTableBody");
@@ -150,28 +168,6 @@
         statusEl.hidden = true;
     }
 
-    function formatNumber(value) {
-        if (value === null || value === undefined) {
-            return "—";
-        }
-        const numericValue = typeof value === "number" ? value : Number(value);
-        if (Number.isNaN(numericValue)) {
-            return "—";
-        }
-        return numericValue.toLocaleString();
-    }
-
-    function formatPercentage(value) {
-        if (value === null || value === undefined) {
-            return "—";
-        }
-        const numericValue = typeof value === "number" ? value : Number(value);
-        if (Number.isNaN(numericValue)) {
-            return "—";
-        }
-        return `${(numericValue * 100).toFixed(2)}%`;
-    }
-
     function handleSort(event) {
         const header = event.currentTarget;
         const key = header.dataset.sortKey;
@@ -197,49 +193,6 @@
                 header.removeAttribute("data-sort-direction");
             }
         });
-    }
-
-    function sortResults(results, key, direction) {
-        if (!key) {
-            return results.slice();
-        }
-        const multiplier = direction === "desc" ? -1 : 1;
-        return results.slice().sort((a, b) => {
-            const aValue = getSortValue(a, key);
-            const bValue = getSortValue(b, key);
-            if (aValue == null && bValue == null) {
-                return 0;
-            }
-            if (aValue == null) {
-                return 1 * multiplier;
-            }
-            if (bValue == null) {
-                return -1 * multiplier;
-            }
-            if (typeof aValue === "number" && typeof bValue === "number") {
-                return (aValue - bValue) * multiplier;
-            }
-            return aValue.toString().localeCompare(bValue.toString()) * multiplier;
-        });
-    }
-
-    function getSortValue(result, key) {
-        switch (key) {
-            case "sobject":
-                return result.sobjectLabel;
-            case "field":
-                return result.fieldLabel;
-            case "sobjectCount":
-                return result.sobjectCount;
-            case "nonNullCount":
-                return result.nonNullCount;
-            case "nonNullPercentage":
-                return result.nonNullPercentage;
-            case "status":
-                return result.status;
-            default:
-                return null;
-        }
     }
 
     function renderBarChart(results) {
@@ -399,6 +352,17 @@
                 result.status || "Success"
             }`;
             card.appendChild(meta);
+
+            if (result.truncated) {
+                const note = document.createElement("p");
+                note.className = "distribution-card__note";
+                const limit = result.distinctLimit || 100;
+                note.textContent =
+                    `Showing only the ${limit} most common values. This field has more ` +
+                    `distinct values, so lower-frequency values are omitted and the ` +
+                    `percentages below do not sum to 100%.`;
+                card.appendChild(note);
+            }
 
             const meaningfulRows = Array.isArray(result.rows)
                 ? result.rows.filter((row) => Number(row?.count ?? 0) > 0)
@@ -589,14 +553,6 @@
         return container;
     }
 
-    function formatTimelinePeriod(year, month) {
-        if (!year || !month) {
-            return "—";
-        }
-        const date = new Date(year, month - 1, 1);
-        return date.toLocaleString(undefined, { month: "short", year: "numeric" });
-    }
-
     function buildTimelineChart(rows) {
         if (!Array.isArray(rows) || !rows.length) {
             return null;
@@ -720,100 +676,4 @@
         return chartWrapper;
     }
 
-    function getTimelinePeriods(rows) {
-        const map = new Map();
-        rows.forEach((row) => {
-            if (!row.year || !row.month) {
-                return;
-            }
-            const key = `${row.year}-${row.month}`;
-            if (!map.has(key)) {
-                const date = new Date(row.year, row.month - 1, 1);
-                map.set(key, {
-                    key,
-                    sortValue: row.year * 100 + row.month,
-                    label: formatTimelinePeriod(row.year, row.month),
-                    monthLabel: date.toLocaleString(undefined, { month: "short" }),
-                    yearLabel: date.getFullYear().toString()
-                });
-            }
-        });
-        return Array.from(map.values()).sort((a, b) => a.sortValue - b.sortValue);
-    }
-
-    function getTimelineValues(rows) {
-        const seen = new Map();
-        rows.forEach((row) => {
-            const label = formatDistributionValue(row.value);
-            if (!seen.has(label)) {
-                seen.set(label, label);
-            }
-        });
-        return Array.from(seen.keys());
-    }
-
-    function buildTimelineGroupMap(rows) {
-        const groupMap = new Map();
-        rows.forEach((row) => {
-            if (!row.year || !row.month) {
-                return;
-            }
-            const key = `${row.year}-${row.month}`;
-            if (!groupMap.has(key)) {
-                groupMap.set(key, {});
-            }
-            const group = groupMap.get(key);
-            const label = formatDistributionValue(row.value);
-            group[label] = (group[label] || 0) + (row.count || 0);
-        });
-        return groupMap;
-    }
-
-    function getTimelineColor(index) {
-        const palette = [
-            "#4c9ffe",
-            "#ff9f43",
-            "#2ecc71",
-            "#e74c3c",
-            "#9b59b6",
-            "#16a085",
-            "#f1c40f",
-            "#e67e22",
-            "#1abc9c",
-            "#2e86de"
-        ];
-        return palette[index % palette.length];
-    }
-
-    function normalizePercentage(value) {
-        const numericValue = typeof value === "number" ? value : Number(value);
-        if (Number.isNaN(numericValue) || !Number.isFinite(numericValue)) {
-            return 0;
-        }
-        return Math.min(Math.max(numericValue, 0), 1);
-    }
-
-    function formatDistributionValue(value) {
-        if (value === null || value === undefined) {
-            return "NULL";
-        }
-        if (typeof value === "object") {
-            if (value.displayValue) {
-                return value.displayValue;
-            }
-            if (value.value) {
-                return value.value;
-            }
-            return JSON.stringify(value);
-        }
-        return value.toString();
-    }
-
-    function chunkArray(array, size) {
-        const chunks = [];
-        for (let i = 0; i < array.length; i += size) {
-            chunks.push(array.slice(i, i + size));
-        }
-        return chunks;
-    }
 })();

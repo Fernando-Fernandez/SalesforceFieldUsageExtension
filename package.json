@@ -1,0 +1,11 @@
+{
+  "name": "salesforce-field-usage-extension",
+  "version": "1.0.3",
+  "private": true,
+  "description": "Reports Salesforce field usage and trends to help with data quality and other issues.",
+  "scripts": {
+    "test": "node --test",
+    "check": "node --check scripts/popup.js && node --check scripts/report.js && node --check scripts/background.js && node --check scripts/content.js && node --check scripts/lib/usage-core.js"
+  },
+  "license": "SEE LICENSE IN LICENSE"
+}

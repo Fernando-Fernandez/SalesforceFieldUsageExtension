@@ -32,7 +32,8 @@
     , "content_scripts": [
       {
         "js": [
-          "scripts/content.js"
+          "scripts/lib/usage-core.js"
+          , "scripts/content.js"
         ]
         , "type": "module"
         , "matches": [
@@ -49,25 +50,28 @@
     ]
 
     , "web_accessible_resources": [ {
-      "matches": [ 
+      "matches": [
         "https://*.salesforce.com/*",
+        "https://*.salesforce-setup.com/*",
+        "https://*.vf.force.com/*",
         "https://*.visual.force.com/*",
         "https://*.lightning.force.com/*",
         "https://*.cloudforce.com/*",
-        "https://*.visualforce.com/*" 
+        "https://*.visualforce.com/*"
       ],
       "resources": [ "scripts/*", "popup.html", "popup.css", "report.html", "report.css" ]
     } ]
   
     , "background": {
       "service_worker": "scripts/background.js"
-      , "type": "module"
     }
 
     , "permissions": [ "activeTab", "cookies", "scripting", "tabs", "storage" ]
   
     , "host_permissions": [
       "https://*.salesforce.com/*",
+      "https://*.salesforce-setup.com/*",
+      "https://*.vf.force.com/*",
       "https://*.visual.force.com/*",
       "https://*.lightning.force.com/*",
       "https://*.cloudforce.com/*",

@@ -17,8 +17,9 @@
     </section>
 
     <section id="chartSection" hidden>
-        <h2>Field Non-Null Percentage</h2>
-        <div class="chart-container" id="fieldChartContainer" role="img" aria-label="Bar chart of field non-null percentages"></div>
+        <h2>Estimated Field Non-Null Percentage</h2>
+        <p class="section-note">Counts and percentages come from the Salesforce query optimizer's cardinality estimates, not exact record counts, and may differ from a full scan.</p>
+        <div class="chart-container" id="fieldChartContainer" role="img" aria-label="Bar chart of estimated field non-null percentages"></div>
     </section>
 
     <section id="distributionSection" hidden>
@@ -33,7 +34,7 @@
                     <th data-sort-key="field">Field</th>
                     <th data-sort-key="sobjectCount">SObject Count</th>
                     <th data-sort-key="nonNullCount">Estimated Non-Null Count</th>
-                    <th data-sort-key="nonNullPercentage">% Non-Nulls</th>
+                    <th data-sort-key="nonNullPercentage">Estimated % Non-Nulls</th>
                     <th data-sort-key="status">Status</th>
                 </tr>
             </thead>
@@ -47,6 +48,7 @@
     </section>
 </main>
 
+<script src="scripts/lib/usage-core.js"></script>
 <script src="scripts/report.js"></script>
 </body>
 </html>
