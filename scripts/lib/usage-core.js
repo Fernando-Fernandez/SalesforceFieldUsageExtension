@@ -136,6 +136,22 @@
         });
     }
 
+    // Returns the summary results whose non-null percentage is below the given
+    // threshold percent (e.g. 5 -> 0.05), sorted most-empty first — the deprecation
+    // candidates. Results without a numeric percentage are excluded.
+    function findDeprecationCandidates(results, thresholdPercent) {
+        const threshold = (Number(thresholdPercent) || 0) / 100;
+        const list = Array.isArray(results) ? results : [];
+        return list
+            .filter(
+                (result) =>
+                    typeof result.nonNullPercentage === "number" &&
+                    Number.isFinite(result.nonNullPercentage) &&
+                    result.nonNullPercentage < threshold
+            )
+            .sort((a, b) => a.nonNullPercentage - b.nonNullPercentage);
+    }
+
     function formatTimelinePeriod(year, month, locale) {
         if (!year || !month) {
             return "—";
@@ -634,6 +650,7 @@
         formatDistributionValue,
         getSortValue,
         sortResults,
+        findDeprecationCandidates,
         formatTimelinePeriod,
         getTimelinePeriods,
         getTimelineValues,
