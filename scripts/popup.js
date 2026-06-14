@@ -1,8 +1,33 @@
 (function () {
-    const API_VERSION = "v57.0";
+    // Fallback used until the newest version is discovered from /services/data/,
+    // and if that discovery call fails.
+    const DEFAULT_API_VERSION = "v60.0";
     const MESSAGE_KEY = "getHostSession";
+    const INVALIDATE_SESSION = "invalidateSession";
     const REQUEST_SOBJECTS = "getSObjects";
     const STORE_REPORT_DATA = "storeReportData";
+    // Distinct values returned per field in the distribution flow. When the
+    // grouped query returns exactly this many rows the result is truncated and
+    // the report flags it so percentages are not mistaken for the full picture.
+    const DISTINCT_VALUE_LIMIT = 100;
+
+    // Pure helpers live in scripts/lib/usage-core.js (loaded before this script and
+    // unit-tested under node:test). Pull them in as locals so the rest of this file
+    // reads unchanged.
+    const {
+        chunkArray,
+        sanitizeDomain,
+        buildFieldKey,
+        parseFieldKey,
+        isFilterableField,
+        buildExplainUrl,
+        parsePlanFromResponse,
+        extractCompositeError,
+        isAuthFailureStatus,
+        pickLatestApiVersion,
+        extractRecordCount,
+        normalizeTimelineRows
+    } = globalThis.SFUsageCore;
 
     const statusEl = document.getElementById("status");
     const sobjectFilterEl = document.getElementById("sobjectFilter");
@@ -22,6 +47,7 @@
     const state = {
         host: null,
         sessionId: null,
+        apiVersion: DEFAULT_API_VERSION,
         sobjects: [],
         filteredSObjects: [],
         fieldCache: new Map(),
@@ -55,6 +81,8 @@
             state.sessionId = sessionInfo.session;
             setStatus(`Connected to ${state.host}`, "success");
 
+            await loadApiVersion();
+
             const loadedViaTab = await tryPopulateSObjectsFromTab();
             if (!loadedViaTab) {
                 await loadSObjects();
@@ -63,13 +91,6 @@
             setStatus(error.message || "Unable to connect to Salesforce.", "error");
             console.error(error);
         }
-    }
-
-    function sanitizeDomain(domain) {
-        if (!domain) {
-            throw new Error("Salesforce domain not returned by background script.");
-        }
-        return domain.startsWith(".") ? domain.substring(1) : domain;
     }
 
     function getSessionFromBackground(tabUrl) {
@@ -88,9 +109,50 @@
         });
     }
 
+    function invalidateSessionInBackground(tabUrl) {
+        return new Promise((resolve) => {
+            chrome.runtime.sendMessage({ message: INVALIDATE_SESSION, tabUrl }, () => {
+                // Best-effort cache clear; ignore lastError/response.
+                void chrome.runtime.lastError;
+                resolve();
+            });
+        });
+    }
+
+    // Clears the cached (likely expired) session and reads a fresh one. Concurrent
+    // callers share a single in-flight refresh so an expiry mid-scan triggers one
+    // cookie re-read, not one per outstanding request.
+    let sessionRefreshPromise = null;
+    function refreshSession() {
+        if (!sessionRefreshPromise) {
+            sessionRefreshPromise = (async () => {
+                await invalidateSessionInBackground(state.activeTab?.url);
+                const sessionInfo = await getSessionFromBackground(state.activeTab?.url);
+                state.host = sanitizeDomain(sessionInfo.domain);
+                state.sessionId = sessionInfo.session;
+                return sessionInfo;
+            })().finally(() => {
+                sessionRefreshPromise = null;
+            });
+        }
+        return sessionRefreshPromise;
+    }
+
+    async function loadApiVersion() {
+        try {
+            // The version-list resource is itself unversioned, so it is safe to
+            // call before a version is known.
+            const versions = await authenticatedFetch(`https://${state.host}/services/data/`);
+            state.apiVersion = pickLatestApiVersion(versions, DEFAULT_API_VERSION);
+        } catch (error) {
+            console.warn("Unable to discover the latest API version; using default.", error);
+            state.apiVersion = DEFAULT_API_VERSION;
+        }
+    }
+
     async function loadSObjects() {
         setStatus("Loading SObjects…", "info");
-        const endpoint = `https://${state.host}/services/data/${API_VERSION}/sobjects`;
+        const endpoint = `https://${state.host}/services/data/${state.apiVersion}/sobjects`;
         const result = await authenticatedFetch(endpoint);
         setSObjects(result.sobjects || []);
         setStatus(`Loaded ${state.sobjects.length} SObjects via API.`, "success");
@@ -148,7 +210,7 @@
         });
     }
 
-    async function authenticatedFetch(url, options = {}) {
+    async function authenticatedFetch(url, options = {}, allowRetry = true) {
         const requestOptions = {
             method: "GET",
             ...options
@@ -160,6 +222,14 @@
         };
 
         const response = await fetch(url, requestOptions);
+
+        // A 401 usually means the session expired mid-use. Refresh it once and
+        // retry the same request before surfacing the error. The same host/url is
+        // reused because a refresh stays within the same org instance.
+        if (isAuthFailureStatus(response.status) && allowRetry) {
+            await refreshSession();
+            return authenticatedFetch(url, options, false);
+        }
 
         if (!response.ok) {
             const payload = await response.text();
@@ -337,7 +407,7 @@
         if (state.fieldCache.has(sobject)) {
             return state.fieldCache.get(sobject);
         }
-        const endpoint = `https://${state.host}/services/data/${API_VERSION}/sobjects/${sobject}/describe`;
+        const endpoint = `https://${state.host}/services/data/${state.apiVersion}/sobjects/${sobject}/describe`;
         const result = await authenticatedFetch(endpoint);
         const fields = (result.fields || [])
             .map((field) => ({
@@ -472,52 +542,21 @@
         return match ? `${match.label} (${match.name})` : apiName;
     }
 
-    function buildFieldKey(sobject, field) {
-        return `${sobject}:${field}`;
-    }
-
-    function parseFieldKey(value) {
-        if (!value || value.indexOf(":") === -1) {
-            return null;
-        }
-        const [sobject, field] = value.split(":");
-        if (!sobject || !field) {
-            return null;
-        }
-        return { sobject, field };
-    }
-
     function getFieldMetadata(sobject, fieldName) {
         const fields = state.fieldCache.get(sobject) || [];
         return fields.find((field) => field.name === fieldName);
-    }
-
-    function isFilterableField(fieldMeta) {
-        if (!fieldMeta || !fieldMeta.type) {
-            return true;
-        }
-        const type = fieldMeta.type.toLowerCase();
-        return type !== "textarea" && type !== "address";
-    }
-
-    function chunkArray(array, size) {
-        const result = [];
-        for (let i = 0; i < array.length; i += size) {
-            result.push(array.slice(i, i + size));
-        }
-        return result;
     }
 
     async function fetchQueryPlansBatch(batch) {
         if (!batch.length) {
             return new Map();
         }
-        const endpoint = `https://${state.host}/services/data/${API_VERSION}/tooling/composite`;
+        const endpoint = `https://${state.host}/services/data/${state.apiVersion}/tooling/composite`;
         const compositeBody = {
             allOrNone: false,
             compositeRequest: batch.map((detail, index) => ({
                 method: "GET",
-                url: buildExplainUrl(detail.sobject, detail.field),
+                url: buildExplainUrl(detail.sobject, detail.field, state.apiVersion),
                 referenceId: `plan${index}`
             }))
         };
@@ -548,44 +587,6 @@
         });
 
         return resultMap;
-    }
-
-    function buildExplainUrl(sobject, field) {
-        const query = `SELECT count(Id) FROM ${sobject} WHERE ${field} != null`;
-        return `/services/data/${API_VERSION}/tooling/query/?explain=${encodeURIComponent(query)}`;
-    }
-
-    function parsePlanFromResponse(body) {
-        if (!body || !Array.isArray(body.plans) || body.plans.length === 0) {
-            return null;
-        }
-        const plan = body.plans[0];
-        const cardinality = typeof plan.cardinality === "number" ? plan.cardinality : null;
-        const sobjectCardinality =
-            typeof plan.sobjectCardinality === "number" ? plan.sobjectCardinality : null;
-
-        if (cardinality === null || sobjectCardinality === null) {
-            return null;
-        }
-
-        return {
-            nonNullCount: cardinality,
-            sobjectCount: sobjectCardinality,
-            nonNullPercentage: sobjectCardinality === 0 ? 0 : cardinality / sobjectCardinality
-        };
-    }
-
-    function extractCompositeError(body) {
-        if (!body) {
-            return "Unknown error.";
-        }
-        if (Array.isArray(body) && body.length > 0) {
-            return body[0].message || JSON.stringify(body[0]);
-        }
-        if (body.message) {
-            return body.message;
-        }
-        return JSON.stringify(body);
     }
 
     function generateReportId() {
@@ -711,8 +712,9 @@
             return;
         }
 
-        const includeTimeline = explicitSelections.length === 0;
-        await processQueryPlans(selections, { timelineSObjects: includeTimeline ? targetSObjects : [] });
+        // Reaching here means no fields were explicitly selected, so the
+        // SObject-level timeline always accompanies the query-plan summary.
+        await processQueryPlans(selections, { timelineSObjects: targetSObjects });
     }
 
     async function processFieldDistributions(selections) {
@@ -791,6 +793,8 @@
                     fieldLabel,
                     recordCount: totalRecords,
                     rows: distribution.rows,
+                    truncated: !!distribution.truncated,
+                    distinctLimit: distribution.distinctLimit ?? null,
                     timeline: timelineRows,
                     timelineMessage,
                     status: statusMessage
@@ -978,22 +982,45 @@
         if (recordCountCache.has(sobject)) {
             return recordCountCache.get(sobject);
         }
-        const query = `SELECT COUNT() FROM ${sobject}`;
-        const endpoint = `https://${state.host}/services/data/${API_VERSION}/query/?q=${encodeURIComponent(query)}`;
-        const data = await authenticatedFetch(endpoint);
-        const total = typeof data.totalSize === "number" ? data.totalSize : 0;
+        // Prefer the recordCount limits resource: it returns instantly even for
+        // multi-million-row objects, where SELECT COUNT() can time out. Fall back
+        // to an exact COUNT() when the object is absent from the response (custom
+        // objects/metadata types are not always listed) or the call fails.
+        let total = await fetchApproximateRecordCount(sobject);
+        if (total === null) {
+            total = await fetchExactRecordCount(sobject);
+        }
         recordCountCache.set(sobject, total);
         return total;
+    }
+
+    async function fetchApproximateRecordCount(sobject) {
+        try {
+            const endpoint = `https://${state.host}/services/data/${state.apiVersion}/limits/recordCount?sObjects=${encodeURIComponent(sobject)}`;
+            const data = await authenticatedFetch(endpoint);
+            return extractRecordCount(data, sobject);
+        } catch (error) {
+            console.warn(`recordCount unavailable for ${sobject}; falling back to COUNT().`, error);
+            return null;
+        }
+    }
+
+    async function fetchExactRecordCount(sobject) {
+        const query = `SELECT COUNT() FROM ${sobject}`;
+        const endpoint = `https://${state.host}/services/data/${state.apiVersion}/query/?q=${encodeURIComponent(query)}`;
+        const data = await authenticatedFetch(endpoint);
+        return typeof data.totalSize === "number" ? data.totalSize : 0;
     }
 
     async function fetchFieldDistribution(sobject, field, totalRecords, fieldMeta) {
         if (fieldMeta && !fieldMeta.groupable) {
             return fetchNonGroupableDistribution(sobject, field, totalRecords);
         }
-        const query = `SELECT ${field}, COUNT(Id) cnt FROM ${sobject} GROUP BY ${field} ORDER BY COUNT(Id) DESC LIMIT 100`;
-        const endpoint = `https://${state.host}/services/data/${API_VERSION}/query/?q=${encodeURIComponent(query)}`;
+        const query = `SELECT ${field}, COUNT(Id) cnt FROM ${sobject} GROUP BY ${field} ORDER BY COUNT(Id) DESC LIMIT ${DISTINCT_VALUE_LIMIT}`;
+        const endpoint = `https://${state.host}/services/data/${state.apiVersion}/query/?q=${encodeURIComponent(query)}`;
         const data = await authenticatedFetch(endpoint);
-        const rows = (data.records || [])
+        const records = data.records || [];
+        const rows = records
             .map((record) => {
                 const count = Number(record.cnt ?? record.expr0 ?? 0);
                 return {
@@ -1003,12 +1030,15 @@
                 };
             })
             .filter((row) => row.count > 0);
-        return { rows };
+        // A full result set has fewer rows than the cap; hitting the cap means
+        // Salesforce dropped lower-frequency values from the grouping.
+        const truncated = records.length >= DISTINCT_VALUE_LIMIT;
+        return { rows, truncated, distinctLimit: DISTINCT_VALUE_LIMIT };
     }
 
     async function fetchNonGroupableDistribution(sobject, field, totalRecords) {
         const nullQuery = `SELECT COUNT(Id) cnt FROM ${sobject} WHERE ${field} = null`;
-        const endpoint = `https://${state.host}/services/data/${API_VERSION}/query/?q=${encodeURIComponent(nullQuery)}`;
+        const endpoint = `https://${state.host}/services/data/${state.apiVersion}/query/?q=${encodeURIComponent(nullQuery)}`;
         const data = await authenticatedFetch(endpoint);
         const nullCount = Number(data.records?.[0]?.cnt ?? data.expr0 ?? data.totalSize ?? 0);
         const notNullCount = Math.max((totalRecords ?? 0) - nullCount, 0);
@@ -1075,7 +1105,7 @@
             ORDER BY CALENDAR_YEAR(LastModifiedDate), CALENDAR_MONTH(LastModifiedDate)
             LIMIT 1000
         `;
-        const endpoint = `https://${state.host}/services/data/${API_VERSION}/query/?q=${encodeURIComponent(query)}`;
+        const endpoint = `https://${state.host}/services/data/${state.apiVersion}/query/?q=${encodeURIComponent(query)}`;
         const data = await authenticatedFetch(endpoint);
         const rows = (data.records || [])
             .map((record) => ({
@@ -1101,7 +1131,7 @@
             ORDER BY CALENDAR_YEAR(LastModifiedDate), CALENDAR_MONTH(LastModifiedDate), ${field}
             LIMIT 1000
         `;
-        const endpoint = `https://${state.host}/services/data/${API_VERSION}/query/?q=${encodeURIComponent(query)}`;
+        const endpoint = `https://${state.host}/services/data/${state.apiVersion}/query/?q=${encodeURIComponent(query)}`;
         const data = await authenticatedFetch(endpoint);
         const rows = (data.records || [])
             .map((record) => {
@@ -1143,7 +1173,7 @@
             ORDER BY CALENDAR_YEAR(LastModifiedDate), CALENDAR_MONTH(LastModifiedDate)
             LIMIT 1000
         `;
-        const endpoint = `https://${state.host}/services/data/${API_VERSION}/query/?q=${encodeURIComponent(query)}`;
+        const endpoint = `https://${state.host}/services/data/${state.apiVersion}/query/?q=${encodeURIComponent(query)}`;
         const data = await authenticatedFetch(endpoint);
         return (data.records || [])
             .map((record) => ({
@@ -1153,30 +1183,6 @@
                 count: Number(record.cnt ?? record.expr2 ?? 0)
             }))
             .filter((row) => Number.isFinite(row.year) && Number.isFinite(row.month) && row.year > 0 && row.month > 0);
-    }
-
-    function normalizeTimelineRows(rows = []) {
-        if (!rows.length) {
-            return [];
-        }
-        const totals = new Map();
-        rows.forEach((row) => {
-            const key = `${row.year}-${row.month}`;
-            totals.set(key, (totals.get(key) || 0) + (row.count || 0));
-        });
-        return rows
-            .map((row) => {
-                const key = `${row.year}-${row.month}`;
-                const total = totals.get(key) || 0;
-                return {
-                    year: row.year,
-                    month: row.month,
-                    value: row.value ?? null,
-                    count: row.count || 0,
-                    percentage: total ? (row.count || 0) / total : 0
-                };
-            })
-            .filter((row) => row.count > 0);
     }
 
     function buildSelectionPairs(includeAllWhenEmpty = false, targetSObjects = state.selectedSObjects) {

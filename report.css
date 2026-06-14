@@ -135,6 +135,23 @@ th[data-sort-direction="desc"]::after {
     margin: 0 0 0.75rem;
 }
 
+.section-note {
+    font-size: 0.85rem;
+    color: #5f6c80;
+    margin: 0 0 0.75rem;
+    max-width: 70ch;
+}
+
+.distribution-card__note {
+    font-size: 0.85rem;
+    color: #8a6d3b;
+    background: #fcf3e3;
+    border: 1px solid #f0d9a8;
+    border-radius: 4px;
+    padding: 0.5rem 0.75rem;
+    margin: 0 0 0.75rem;
+}
+
 .distribution-card table {
     width: 100%;
     border-collapse: collapse;
