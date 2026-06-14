@@ -6,6 +6,9 @@
     const INVALIDATE_SESSION = "invalidateSession";
     const REQUEST_SOBJECTS = "getSObjects";
     const STORE_REPORT_DATA = "storeReportData";
+    // Per-org "remember my last selection" cache (object/field API names only — no
+    // sensitive data — so chrome.storage.local is appropriate).
+    const SELECTIONS_STORAGE_KEY = "fieldUsageSelections";
     // Distinct values returned per field in the distribution flow. When the
     // grouped query returns exactly this many rows the result is truncated and
     // the report flags it so percentages are not mistaken for the full picture.
@@ -27,6 +30,8 @@
         isAuthFailureStatus,
         pickLatestApiVersion,
         buildDistributionRows,
+        selectionsToStorage,
+        selectionsFromStorage,
         normalizeTimelineRows
     } = globalThis.SFUsageCore;
 
@@ -87,9 +92,59 @@
             if (!loadedViaTab) {
                 await loadSObjects();
             }
+
+            await restoreSelections();
         } catch (error) {
             setStatus(error.message || "Unable to connect to Salesforce.", "error");
             console.error(error);
+        }
+    }
+
+    // Saves the current object/field selection for this org so the next visit can
+    // restore it. Best-effort; failures are non-fatal.
+    function persistSelections() {
+        if (!state.host || !chrome.storage?.local) {
+            return;
+        }
+        chrome.storage.local.get(SELECTIONS_STORAGE_KEY).then((stored) => {
+            const all = stored?.[SELECTIONS_STORAGE_KEY] || {};
+            all[state.host] = selectionsToStorage(state.selectedSObjects, state.selectedFields);
+            return chrome.storage.local.set({ [SELECTIONS_STORAGE_KEY]: all });
+        }).catch((error) => console.warn("Unable to persist selections.", error));
+    }
+
+    // Restores the saved selection for this org: re-selects the objects, loads their
+    // fields, and re-selects the fields that still exist.
+    async function restoreSelections() {
+        if (!state.host || !chrome.storage?.local) {
+            return;
+        }
+        try {
+            const stored = await chrome.storage.local.get(SELECTIONS_STORAGE_KEY);
+            const forHost = stored?.[SELECTIONS_STORAGE_KEY]?.[state.host];
+            if (!forHost) {
+                return;
+            }
+            const validNames = new Set(state.sobjects.map((obj) => obj.name));
+            const { selectedSObjects, selectedFields } = selectionsFromStorage(forHost, validNames);
+            if (!selectedSObjects.length) {
+                return;
+            }
+            state.selectedSObjects = selectedSObjects;
+            renderSObjectOptions();
+            await ensureFieldsLoaded(selectedSObjects);
+            selectedFields.forEach((list, sobject) => {
+                const existing = new Set((state.fieldCache.get(sobject) || []).map((field) => field.name));
+                const kept = list.filter((name) => existing.has(name));
+                if (kept.length) {
+                    state.selectedFields.set(sobject, kept);
+                }
+            });
+            renderFieldLists();
+            updateProcessButtonState();
+            setStatus(`Restored your last selection for ${state.host}.`, "info");
+        } catch (error) {
+            console.warn("Unable to restore selections.", error);
         }
     }
 
@@ -695,6 +750,9 @@
             setStatus("Select at least one SObject before processing.", "error");
             return;
         }
+
+        // Remember what was run so the next visit to this org can restore it.
+        persistSelections();
 
         try {
             await ensureFieldsLoaded(targetSObjects);

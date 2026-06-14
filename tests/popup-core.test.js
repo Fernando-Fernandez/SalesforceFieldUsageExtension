@@ -9,6 +9,39 @@ test("sanitizeDomain strips a single leading dot", () => {
     assert.equal(core.sanitizeDomain("my.salesforce.com"), "my.salesforce.com");
 });
 
+test("selectionsToStorage serializes objects and the field Map, dropping empties", () => {
+    const fields = new Map([
+        ["Account", ["Industry", "Type"]],
+        ["Contact", []]
+    ]);
+    assert.deepEqual(core.selectionsToStorage(["Account", "Contact"], fields), {
+        sobjects: ["Account", "Contact"],
+        fields: { Account: ["Industry", "Type"] }
+    });
+});
+
+test("selectionsToStorage handles missing/invalid input", () => {
+    assert.deepEqual(core.selectionsToStorage(null, null), { sobjects: [], fields: {} });
+});
+
+test("selectionsFromStorage rebuilds selection and drops objects no longer in the org", () => {
+    const stored = { sobjects: ["Account", "Gone__c"], fields: { Account: ["Industry"], Gone__c: ["X__c"] } };
+    const { selectedSObjects, selectedFields } = core.selectionsFromStorage(stored, new Set(["Account", "Contact"]));
+    assert.deepEqual(selectedSObjects, ["Account"]);
+    assert.equal(selectedFields instanceof Map, true);
+    assert.deepEqual(selectedFields.get("Account"), ["Industry"]);
+    assert.equal(selectedFields.has("Gone__c"), false);
+});
+
+test("selectionsFromStorage tolerates empty/missing input", () => {
+    const empty = core.selectionsFromStorage(null, new Set(["Account"]));
+    assert.deepEqual(empty.selectedSObjects, []);
+    assert.equal(empty.selectedFields.size, 0);
+    // validNames may also be a plain array
+    const fromArray = core.selectionsFromStorage({ sobjects: ["Account"], fields: {} }, ["Account"]);
+    assert.deepEqual(fromArray.selectedSObjects, ["Account"]);
+});
+
 test("sanitizeDomain throws on a missing domain", () => {
     assert.throws(() => core.sanitizeDomain(""), /domain not returned/i);
     assert.throws(() => core.sanitizeDomain(null), /domain not returned/i);

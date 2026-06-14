@@ -217,6 +217,41 @@
         return { sobject, field };
     }
 
+    // Serializes the popup's selection (an array of object names + a Map of
+    // object -> field names) into a plain, storable object.
+    function selectionsToStorage(selectedSObjects, selectedFields) {
+        const fields = {};
+        if (selectedFields && typeof selectedFields.forEach === "function") {
+            selectedFields.forEach((list, sobject) => {
+                if (Array.isArray(list) && list.length) {
+                    fields[sobject] = list.slice();
+                }
+            });
+        }
+        return {
+            sobjects: Array.isArray(selectedSObjects) ? selectedSObjects.slice() : [],
+            fields
+        };
+    }
+
+    // Rebuilds a selection from storage, dropping objects no longer present in the
+    // org (validNames). Returns { selectedSObjects, selectedFields: Map }.
+    function selectionsFromStorage(stored, validNames) {
+        const valid = validNames instanceof Set ? validNames : new Set(validNames || []);
+        const sobjects = Array.isArray(stored && stored.sobjects)
+            ? stored.sobjects.filter((name) => valid.has(name))
+            : [];
+        const storedFields = (stored && stored.fields) || {};
+        const selectedFields = new Map();
+        sobjects.forEach((sobject) => {
+            const list = Array.isArray(storedFields[sobject]) ? storedFields[sobject] : [];
+            if (list.length) {
+                selectedFields.set(sobject, list.slice());
+            }
+        });
+        return { selectedSObjects: sobjects, selectedFields };
+    }
+
     // textarea/address fields cannot be used as SOQL filter criteria, so they are
     // skipped by the usage/timeline queries. Unknown/typeless fields are allowed.
     function isFilterableField(fieldMeta) {
@@ -581,6 +616,8 @@
         sanitizeDomain,
         buildFieldKey,
         parseFieldKey,
+        selectionsToStorage,
+        selectionsFromStorage,
         isFilterableField,
         buildExplainUrl,
         parsePlanFromResponse,
