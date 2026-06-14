@@ -16,6 +16,7 @@
     // reads unchanged.
     const {
         chunkArray,
+        cleanSObjectLabel,
         sanitizeDomain,
         buildFieldKey,
         parseFieldKey,
@@ -274,11 +275,14 @@
     function setSObjects(sobjects) {
         state.sobjects = sobjects
             .filter((obj) => obj && obj.name)
-            .map((obj) => ({
-                name: obj.name,
-                label: obj.label || obj.name,
-                key: `${obj.label || obj.name} (${obj.name})`
-            }))
+            .map((obj) => {
+                const label = cleanSObjectLabel(obj.label, obj.name);
+                return {
+                    name: obj.name,
+                    label,
+                    key: `${label} (${obj.name})`
+                };
+            })
             .sort((a, b) => a.label.localeCompare(b.label));
         const validNames = new Set(state.sobjects.map((obj) => obj.name));
         state.selectedSObjects = state.selectedSObjects.filter((name) => validNames.has(name));
