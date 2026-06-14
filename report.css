@@ -253,6 +253,97 @@ th[data-sort-direction="desc"]::after {
     font-style: italic;
 }
 
+.distribution-dependencies {
+    margin-top: 1rem;
+    padding-top: 0.75rem;
+    border-top: 1px solid #eef1f7;
+}
+
+.distribution-dependencies h4 {
+    margin: 0 0 0.5rem;
+    font-size: 0.95rem;
+    color: #2f3c4d;
+}
+
+.distribution-dependencies__button {
+    cursor: pointer;
+    font-size: 0.85rem;
+    padding: 0.35rem 0.7rem;
+    border: 1px solid #4c9ffe;
+    border-radius: 4px;
+    background: #f0f7ff;
+    color: #1b6fd6;
+}
+
+.distribution-dependencies__button:hover {
+    background: #e2efff;
+}
+
+.distribution-dependencies__button:disabled {
+    cursor: default;
+    opacity: 0.6;
+}
+
+.distribution-dependencies__output {
+    margin-top: 0.5rem;
+}
+
+.distribution-dependencies__note {
+    margin: 0.3rem 0 0;
+    font-size: 0.9rem;
+    color: #5f6c80;
+}
+
+.distribution-dependencies__summary {
+    margin: 0 0 0.4rem;
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: #2f3c4d;
+}
+
+.distribution-dependencies__list {
+    margin: 0;
+    padding-left: 1.2rem;
+    font-size: 0.9rem;
+    color: #2f3c4d;
+}
+
+.distribution-dependencies__list li {
+    margin-bottom: 0.25rem;
+}
+
+.summary-field-name {
+    margin-bottom: 0.3rem;
+}
+
+.summary-dependencies__button {
+    cursor: pointer;
+    font-size: 0.78rem;
+    padding: 0.2rem 0.5rem;
+    border: 1px solid #4c9ffe;
+    border-radius: 4px;
+    background: #f0f7ff;
+    color: #1b6fd6;
+    white-space: nowrap;
+}
+
+.summary-dependencies__button:hover {
+    background: #e2efff;
+}
+
+.summary-dependencies__button:disabled {
+    cursor: default;
+    opacity: 0.6;
+}
+
+.summary-dependencies__output {
+    margin-top: 0.4rem;
+}
+
+.summary-dependencies__output .distribution-dependencies__list {
+    padding-left: 1rem;
+}
+
 .timeline-chart {
     margin-bottom: 0.8rem;
     background: #fff;

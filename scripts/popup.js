@@ -597,6 +597,11 @@
         const payload = {
             reportId: generateReportId(),
             generatedAt: Date.now(),
+            // Non-sensitive connection info so the report tab can run on-demand
+            // dependency lookups; the session token is fetched separately and
+            // never persisted.
+            host: state.host,
+            apiVersion: state.apiVersion,
             ...data
         };
         return new Promise((resolve, reject) => {
@@ -731,8 +736,7 @@
                     sobject,
                     sobjectLabel,
                     field,
-                    fieldLabel,
-                    recordCount: null,
+                    fieldLabel,                    recordCount: null,
                     rows: [],
                     timeline: [],
                     timelineMessage: "",
@@ -747,8 +751,7 @@
                     sobject,
                     sobjectLabel,
                     field,
-                    fieldLabel,
-                    recordCount: null,
+                    fieldLabel,                    recordCount: null,
                     rows: [],
                     timeline: [],
                     timelineMessage: "",
@@ -778,8 +781,7 @@
                     sobject,
                     sobjectLabel,
                     field,
-                    fieldLabel,
-                    recordCount: totalRecords,
+                    fieldLabel,                    recordCount: totalRecords,
                     rows: distribution.rows,
                     truncated: !!distribution.truncated,
                     distinctLimit: distribution.distinctLimit ?? null,
@@ -793,8 +795,7 @@
                     sobject,
                     sobjectLabel,
                     field,
-                    fieldLabel,
-                    recordCount: null,
+                    fieldLabel,                    recordCount: null,
                     rows: [],
                     timeline: [],
                     timelineMessage: "",

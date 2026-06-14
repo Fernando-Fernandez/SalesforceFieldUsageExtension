@@ -168,3 +168,64 @@ test("extractRecordCount returns null to trigger the COUNT() fallback", () => {
 test("extractRecordCount accepts a zero count", () => {
     assert.equal(core.extractRecordCount({ sObjects: [{ name: "Account", count: 0 }] }, "Account"), 0);
 });
+
+test("customFieldDeveloperName strips __c and namespace prefixes", () => {
+    assert.equal(core.customFieldDeveloperName("Foo__c"), "Foo");
+    assert.equal(core.customFieldDeveloperName("ns__Foo__c"), "Foo");
+    assert.equal(core.customFieldDeveloperName("My_Field__c"), "My_Field");
+});
+
+test("customFieldDeveloperName returns null for standard fields", () => {
+    assert.equal(core.customFieldDeveloperName("Industry"), null);
+    assert.equal(core.customFieldDeveloperName("Name"), null);
+    assert.equal(core.customFieldDeveloperName(null), null);
+    assert.equal(core.customFieldDeveloperName(42), null);
+});
+
+test("buildCustomFieldIdQuery uses EntityDefinition and DeveloperName", () => {
+    const q = core.buildCustomFieldIdQuery("Account", "My_Field");
+    assert.match(q, /FROM CustomField/);
+    assert.match(q, /EntityDefinition\.QualifiedApiName = 'Account'/);
+    assert.match(q, /DeveloperName = 'My_Field'/);
+    assert.match(q, /LIMIT 1$/);
+});
+
+test("buildCustomFieldIdQuery escapes single quotes to prevent SOQL injection", () => {
+    const q = core.buildCustomFieldIdQuery("Acc'ount", "Fie'ld");
+    assert.match(q, /'Acc\\'ount'/);
+    assert.match(q, /'Fie\\'ld'/);
+});
+
+test("buildDependencyQuery targets RefMetadataComponentId", () => {
+    const q = core.buildDependencyQuery("00N000000000001");
+    assert.match(q, /FROM MetadataComponentDependency/);
+    assert.match(q, /RefMetadataComponentId = '00N000000000001'/);
+});
+
+test("extractFirstId returns the first record id or null", () => {
+    assert.equal(core.extractFirstId({ records: [{ Id: "00Nabc" }, { Id: "00Nxyz" }] }), "00Nabc");
+    assert.equal(core.extractFirstId({ records: [] }), null);
+    assert.equal(core.extractFirstId({}), null);
+    assert.equal(core.extractFirstId(null), null);
+});
+
+test("groupDependencies groups by type with de-duped sorted names", () => {
+    const rows = [
+        { MetadataComponentType: "Layout", MetadataComponentName: "Account Layout" },
+        { MetadataComponentType: "Flow", MetadataComponentName: "Update_Rating" },
+        { MetadataComponentType: "Layout", MetadataComponentName: "Account Layout" },
+        { MetadataComponentType: "Layout", MetadataComponentName: "Sales Layout" }
+    ];
+    const grouped = core.groupDependencies(rows);
+    assert.deepEqual(grouped, [
+        { type: "Flow", count: 1, names: ["Update_Rating"] },
+        { type: "Layout", count: 2, names: ["Account Layout", "Sales Layout"] }
+    ]);
+});
+
+test("groupDependencies tolerates empty input and missing fields", () => {
+    assert.deepEqual(core.groupDependencies([]), []);
+    assert.deepEqual(core.groupDependencies(null), []);
+    const grouped = core.groupDependencies([{}, null]);
+    assert.deepEqual(grouped, [{ type: "Unknown", count: 1, names: ["(unnamed)"] }]);
+});
