@@ -19,6 +19,31 @@
         return result;
     }
 
+    // Builds an RFC 4180 CSV string from a header array and an array of row arrays.
+    // Cells containing a comma, quote, CR, or LF are quoted with embedded quotes
+    // doubled; null/undefined become empty cells. Rows are CRLF-separated.
+    function toCsv(headers, rows) {
+        const escapeCell = (value) => {
+            const text = value === null || value === undefined ? "" : String(value);
+            return /[",\r\n]/.test(text) ? '"' + text.replace(/"/g, '""') + '"' : text;
+        };
+        const lines = [(headers || []).map(escapeCell).join(",")];
+        (rows || []).forEach((row) => {
+            lines.push((row || []).map(escapeCell).join(","));
+        });
+        return lines.join("\r\n");
+    }
+
+    // Salesforce returns a "__MISSING LABEL__ PropertyFile - val <key>" placeholder
+    // as the label for objects with no localized label (mostly internal/system
+    // objects). Fall back to the API name so the picker shows something sensible.
+    function cleanSObjectLabel(label, name) {
+        if (!label || /__MISSING LABEL__/.test(label)) {
+            return name;
+        }
+        return label;
+    }
+
     function formatNumber(value) {
         if (value === null || value === undefined) {
             return "—";
@@ -354,6 +379,77 @@
             .sort((a, b) => a.type.localeCompare(b.type));
     }
 
+    // Shapes grouped distribution records (value + count) into display rows with
+    // per-record-total percentages. Callers query LIMIT (limit + 1) so this can
+    // distinguish "exactly `limit` distinct values" (not truncated) from "more
+    // than `limit`" (truncated): truncation is length > limit, and only then are
+    // the rows capped to `limit` for display.
+    function buildDistributionRows(records, field, totalRecords, limit) {
+        const list = Array.isArray(records) ? records : [];
+        const truncated = list.length > limit;
+        const visible = truncated ? list.slice(0, limit) : list;
+        const rows = visible
+            .map((record) => {
+                const count = Number(record.cnt ?? record.expr0 ?? 0);
+                return {
+                    value: record[field] ?? null,
+                    count,
+                    percentage: totalRecords ? count / totalRecords : 0
+                };
+            })
+            .filter((row) => row.count > 0);
+        return { rows, truncated };
+    }
+
+    // --- picklist health helpers -------------------------------------------
+
+    // Turns distribution rows into the set of actually-used picklist values with
+    // counts. For multi-select fields a row value is a ";"-joined combination, so
+    // it is split and each member accrues the row's count. NULL/blank are skipped.
+    function extractUsedPicklistValues(rows, isMultiSelect) {
+        const counts = new Map();
+        (rows || []).forEach((row) => {
+            if (!row || row.value === null || row.value === undefined) {
+                return;
+            }
+            const count = Number(row.count) || 0;
+            const parts = isMultiSelect ? String(row.value).split(";") : [String(row.value)];
+            parts.forEach((part) => {
+                const value = part.trim();
+                if (value !== "") {
+                    counts.set(value, (counts.get(value) || 0) + count);
+                }
+            });
+        });
+        return Array.from(counts.entries()).map(([value, count]) => ({ value, count }));
+    }
+
+    // Compares the picklist's defined values (from describe — active values) against
+    // the values actually present in the data. Returns:
+    //   unused        - defined values with no records (dead entries, safe to remove),
+    //                   or null when sampleTruncated: the used set is only the top-N
+    //                   values, so a value missing from it might still be used beyond
+    //                   the cap and cannot be declared unused.
+    //   nonConforming - values in the data that are not defined (inactive/legacy/junk);
+    //                   always valid since the observed values genuinely exist.
+    function analyzePicklistHealth(definedValues, usedValues, sampleTruncated) {
+        const defined = Array.isArray(definedValues) ? definedValues : [];
+        const used = Array.isArray(usedValues) ? usedValues : [];
+        const usedKeys = new Set(
+            used.filter((u) => u && u.value != null).map((u) => String(u.value))
+        );
+        const definedKeys = new Set(defined.filter((d) => d && d.value != null).map((d) => String(d.value)));
+        const unused = sampleTruncated
+            ? null
+            : defined
+                .filter((d) => d && d.value != null && !usedKeys.has(String(d.value)))
+                .map((d) => ({ value: d.value, label: d.label != null ? d.label : d.value }));
+        const nonConforming = used
+            .filter((u) => u && u.value != null && !definedKeys.has(String(u.value)))
+            .map((u) => ({ value: u.value, count: Number(u.count) || 0 }));
+        return { unused, nonConforming };
+    }
+
     // Adds a per-period percentage to grouped timeline rows (each value's share of
     // its own month) and drops empty rows.
     function normalizeTimelineRows(rows = []) {
@@ -469,6 +565,8 @@
 
     const api = {
         chunkArray,
+        toCsv,
+        cleanSObjectLabel,
         formatNumber,
         formatPercentage,
         normalizePercentage,
@@ -494,6 +592,9 @@
         buildDependencyQuery,
         extractFirstId,
         groupDependencies,
+        buildDistributionRows,
+        extractUsedPicklistValues,
+        analyzePicklistHealth,
         normalizeTimelineRows,
         parseOrgIdFromCookie,
         findSessionCookieForOrg,

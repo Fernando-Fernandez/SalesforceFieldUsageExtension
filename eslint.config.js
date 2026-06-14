@@ -14,6 +14,7 @@ const browserGlobals = {
     console: "readonly",
     URL: "readonly",
     URLSearchParams: "readonly",
+    Blob: "readonly",
     setTimeout: "readonly",
     clearTimeout: "readonly",
     chrome: "readonly",

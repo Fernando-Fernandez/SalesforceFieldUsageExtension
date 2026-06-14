@@ -16,6 +16,7 @@
     // reads unchanged.
     const {
         chunkArray,
+        cleanSObjectLabel,
         sanitizeDomain,
         buildFieldKey,
         parseFieldKey,
@@ -25,6 +26,7 @@
         extractCompositeError,
         isAuthFailureStatus,
         pickLatestApiVersion,
+        buildDistributionRows,
         normalizeTimelineRows
     } = globalThis.SFUsageCore;
 
@@ -273,11 +275,14 @@
     function setSObjects(sobjects) {
         state.sobjects = sobjects
             .filter((obj) => obj && obj.name)
-            .map((obj) => ({
-                name: obj.name,
-                label: obj.label || obj.name,
-                key: `${obj.label || obj.name} (${obj.name})`
-            }))
+            .map((obj) => {
+                const label = cleanSObjectLabel(obj.label, obj.name);
+                return {
+                    name: obj.name,
+                    label,
+                    key: `${label} (${obj.name})`
+                };
+            })
             .sort((a, b) => a.label.localeCompare(b.label));
         const validNames = new Set(state.sobjects.map((obj) => obj.name));
         state.selectedSObjects = state.selectedSObjects.filter((name) => validNames.has(name));
@@ -410,7 +415,12 @@
                 name: field.name,
                 label: field.label || field.name,
                 type: field.type,
-                groupable: !!field.groupable
+                groupable: !!field.groupable,
+                // describe returns active picklist values only; used for the
+                // picklist health check in the distribution report.
+                picklistValues: Array.isArray(field.picklistValues)
+                    ? field.picklistValues.map((pv) => ({ value: pv.value, label: pv.label || pv.value }))
+                    : []
             }))
             .sort((a, b) => a.label.localeCompare(b.label));
 
@@ -735,7 +745,8 @@
                     sobject,
                     sobjectLabel,
                     field,
-                    fieldLabel,                    recordCount: null,
+                    fieldLabel,
+                    recordCount: null,
                     rows: [],
                     timeline: [],
                     timelineMessage: "",
@@ -750,7 +761,8 @@
                     sobject,
                     sobjectLabel,
                     field,
-                    fieldLabel,                    recordCount: null,
+                    fieldLabel,
+                    recordCount: null,
                     rows: [],
                     timeline: [],
                     timelineMessage: "",
@@ -776,14 +788,24 @@
                     statusMessage = `${statusMessage} | Timeline error: ${timelineError.message || timelineError}`;
                     timelineMessage = `Timeline unavailable: ${timelineError.message || timelineError}`;
                 }
+                // Only attach picklist values when the field was actually grouped:
+                // a non-groupable field falls back to synthetic NOT NULL/NULL buckets
+                // (no real values), which would make the health check compare options
+                // against NOT NULL and mislabel every value.
+                const isPicklist =
+                    (fieldMeta.type === "picklist" || fieldMeta.type === "multipicklist") &&
+                    fieldMeta.groupable;
                 results.push({
                     sobject,
                     sobjectLabel,
                     field,
-                    fieldLabel,                    recordCount: totalRecords,
+                    fieldLabel,
+                    recordCount: totalRecords,
                     rows: distribution.rows,
                     truncated: !!distribution.truncated,
                     distinctLimit: distribution.distinctLimit ?? null,
+                    picklistValues: isPicklist ? fieldMeta.picklistValues : null,
+                    multiSelect: fieldMeta.type === "multipicklist",
                     timeline: timelineRows,
                     timelineMessage,
                     status: statusMessage
@@ -794,7 +816,8 @@
                     sobject,
                     sobjectLabel,
                     field,
-                    fieldLabel,                    recordCount: null,
+                    fieldLabel,
+                    recordCount: null,
                     rows: [],
                     timeline: [],
                     timelineMessage: "",
@@ -986,23 +1009,14 @@
         if (fieldMeta && !fieldMeta.groupable) {
             return fetchNonGroupableDistribution(sobject, field, totalRecords);
         }
-        const query = `SELECT ${field}, COUNT(Id) cnt FROM ${sobject} GROUP BY ${field} ORDER BY COUNT(Id) DESC LIMIT ${DISTINCT_VALUE_LIMIT}`;
+        // Ask for one more than the display cap so an exactly-cap result is not
+        // misreported as truncated (buildDistributionRows treats length > cap as
+        // truncated and caps the rows for display).
+        const fetchLimit = DISTINCT_VALUE_LIMIT + 1;
+        const query = `SELECT ${field}, COUNT(Id) cnt FROM ${sobject} GROUP BY ${field} ORDER BY COUNT(Id) DESC LIMIT ${fetchLimit}`;
         const endpoint = `https://${state.host}/services/data/${state.apiVersion}/query/?q=${encodeURIComponent(query)}`;
         const data = await authenticatedFetch(endpoint);
-        const records = data.records || [];
-        const rows = records
-            .map((record) => {
-                const count = Number(record.cnt ?? record.expr0 ?? 0);
-                return {
-                    value: record[field] ?? null,
-                    count,
-                    percentage: totalRecords ? count / totalRecords : 0
-                };
-            })
-            .filter((row) => row.count > 0);
-        // A full result set has fewer rows than the cap; hitting the cap means
-        // Salesforce dropped lower-frequency values from the grouping.
-        const truncated = records.length >= DISTINCT_VALUE_LIMIT;
+        const { rows, truncated } = buildDistributionRows(data.records, field, totalRecords, DISTINCT_VALUE_LIMIT);
         return { rows, truncated, distinctLimit: DISTINCT_VALUE_LIMIT };
     }
 

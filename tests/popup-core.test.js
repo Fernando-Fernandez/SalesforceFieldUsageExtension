@@ -147,6 +147,114 @@ test("pickLatestApiVersion falls back for empty/invalid input", () => {
     assert.equal(core.pickLatestApiVersion([{ label: "x" }], "v60.0"), "v60.0");
 });
 
+test("buildDistributionRows maps records to rows with per-total percentages", () => {
+    const records = [
+        { Status__c: "Open", cnt: 30 },
+        { Status__c: "Closed", cnt: 10 }
+    ];
+    const { rows, truncated } = core.buildDistributionRows(records, "Status__c", 40, 100);
+    assert.equal(truncated, false);
+    assert.deepEqual(rows, [
+        { value: "Open", count: 30, percentage: 0.75 },
+        { value: "Closed", count: 10, percentage: 0.25 }
+    ]);
+});
+
+test("buildDistributionRows treats exactly `limit` distinct values as NOT truncated", () => {
+    // The caller fetches limit+1; exactly `limit` rows means nothing was dropped.
+    const records = Array.from({ length: 3 }, (_, i) => ({ F__c: `v${i}`, cnt: 1 }));
+    const { rows, truncated } = core.buildDistributionRows(records, "F__c", 3, 3);
+    assert.equal(truncated, false);
+    assert.equal(rows.length, 3);
+});
+
+test("buildDistributionRows marks truncated and caps rows when over `limit`", () => {
+    // limit+1 rows came back -> there are more than `limit` distinct values.
+    const records = Array.from({ length: 4 }, (_, i) => ({ F__c: `v${i}`, cnt: 5 - i }));
+    const { rows, truncated } = core.buildDistributionRows(records, "F__c", 100, 3);
+    assert.equal(truncated, true);
+    assert.equal(rows.length, 3, "only the first `limit` rows are displayed");
+    assert.deepEqual(rows.map((r) => r.value), ["v0", "v1", "v2"]);
+});
+
+test("buildDistributionRows drops zero counts, defaults missing value to null, handles no total", () => {
+    const records = [
+        { F__c: "a", cnt: 0 },
+        { cnt: 5 }
+    ];
+    const { rows } = core.buildDistributionRows(records, "F__c", 0, 100);
+    assert.deepEqual(rows, [{ value: null, count: 5, percentage: 0 }]);
+});
+
+test("buildDistributionRows tolerates non-array input", () => {
+    assert.deepEqual(core.buildDistributionRows(null, "F__c", 10, 100), { rows: [], truncated: false });
+});
+
+test("extractUsedPicklistValues returns used single-select values, skipping NULL", () => {
+    const rows = [
+        { value: "Open", count: 5 },
+        { value: "Closed", count: 3 },
+        { value: null, count: 2 }
+    ];
+    assert.deepEqual(core.extractUsedPicklistValues(rows, false), [
+        { value: "Open", count: 5 },
+        { value: "Closed", count: 3 }
+    ]);
+});
+
+test("extractUsedPicklistValues splits multi-select combinations and sums counts", () => {
+    const rows = [
+        { value: "A;B", count: 2 },
+        { value: "B;C", count: 3 },
+        { value: "A", count: 1 }
+    ];
+    const used = core.extractUsedPicklistValues(rows, true);
+    const asMap = Object.fromEntries(used.map((u) => [u.value, u.count]));
+    assert.deepEqual(asMap, { A: 3, B: 5, C: 3 });
+});
+
+test("analyzePicklistHealth flags unused defined values and non-conforming data", () => {
+    const defined = [
+        { value: "Open", label: "Open" },
+        { value: "Closed", label: "Closed" },
+        { value: "OnHold", label: "On Hold" }
+    ];
+    const used = [
+        { value: "Open", count: 10 },
+        { value: "Legacy", count: 4 }
+    ];
+    const { unused, nonConforming } = core.analyzePicklistHealth(defined, used);
+    assert.deepEqual(unused, [
+        { value: "Closed", label: "Closed" },
+        { value: "OnHold", label: "On Hold" }
+    ]);
+    assert.deepEqual(nonConforming, [{ value: "Legacy", count: 4 }]);
+});
+
+test("analyzePicklistHealth returns unused=null for a truncated sample but still flags non-conforming", () => {
+    const defined = [{ value: "A", label: "A" }, { value: "B", label: "B" }];
+    // "B" is absent from this (truncated) sample, but we must not call it unused
+    // because it could be used beyond the top-N cap.
+    const used = [{ value: "A", count: 9 }, { value: "Legacy", count: 1 }];
+    const result = core.analyzePicklistHealth(defined, used, true);
+    assert.equal(result.unused, null);
+    assert.deepEqual(result.nonConforming, [{ value: "Legacy", count: 1 }]);
+});
+
+test("analyzePicklistHealth reports a clean picklist as fully healthy", () => {
+    const defined = [{ value: "A", label: "A" }, { value: "B", label: "B" }];
+    const used = [{ value: "A", count: 1 }, { value: "B", count: 2 }];
+    assert.deepEqual(core.analyzePicklistHealth(defined, used), { unused: [], nonConforming: [] });
+});
+
+test("analyzePicklistHealth tolerates empty/invalid input", () => {
+    assert.deepEqual(core.analyzePicklistHealth(null, null), { unused: [], nonConforming: [] });
+    assert.deepEqual(core.analyzePicklistHealth([{ value: "A", label: "A" }], []), {
+        unused: [{ value: "A", label: "A" }],
+        nonConforming: []
+    });
+});
+
 test("parseCustomFieldName splits namespace and developer name", () => {
     assert.deepEqual(core.parseCustomFieldName("Foo__c"), { namespace: null, developerName: "Foo" });
     assert.deepEqual(core.parseCustomFieldName("ns__Foo__c"), { namespace: "ns", developerName: "Foo" });
