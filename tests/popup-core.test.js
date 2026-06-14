@@ -147,6 +147,49 @@ test("pickLatestApiVersion falls back for empty/invalid input", () => {
     assert.equal(core.pickLatestApiVersion([{ label: "x" }], "v60.0"), "v60.0");
 });
 
+test("buildDistributionRows maps records to rows with per-total percentages", () => {
+    const records = [
+        { Status__c: "Open", cnt: 30 },
+        { Status__c: "Closed", cnt: 10 }
+    ];
+    const { rows, truncated } = core.buildDistributionRows(records, "Status__c", 40, 100);
+    assert.equal(truncated, false);
+    assert.deepEqual(rows, [
+        { value: "Open", count: 30, percentage: 0.75 },
+        { value: "Closed", count: 10, percentage: 0.25 }
+    ]);
+});
+
+test("buildDistributionRows treats exactly `limit` distinct values as NOT truncated", () => {
+    // The caller fetches limit+1; exactly `limit` rows means nothing was dropped.
+    const records = Array.from({ length: 3 }, (_, i) => ({ F__c: `v${i}`, cnt: 1 }));
+    const { rows, truncated } = core.buildDistributionRows(records, "F__c", 3, 3);
+    assert.equal(truncated, false);
+    assert.equal(rows.length, 3);
+});
+
+test("buildDistributionRows marks truncated and caps rows when over `limit`", () => {
+    // limit+1 rows came back -> there are more than `limit` distinct values.
+    const records = Array.from({ length: 4 }, (_, i) => ({ F__c: `v${i}`, cnt: 5 - i }));
+    const { rows, truncated } = core.buildDistributionRows(records, "F__c", 100, 3);
+    assert.equal(truncated, true);
+    assert.equal(rows.length, 3, "only the first `limit` rows are displayed");
+    assert.deepEqual(rows.map((r) => r.value), ["v0", "v1", "v2"]);
+});
+
+test("buildDistributionRows drops zero counts, defaults missing value to null, handles no total", () => {
+    const records = [
+        { F__c: "a", cnt: 0 },
+        { cnt: 5 }
+    ];
+    const { rows } = core.buildDistributionRows(records, "F__c", 0, 100);
+    assert.deepEqual(rows, [{ value: null, count: 5, percentage: 0 }]);
+});
+
+test("buildDistributionRows tolerates non-array input", () => {
+    assert.deepEqual(core.buildDistributionRows(null, "F__c", 10, 100), { rows: [], truncated: false });
+});
+
 test("parseCustomFieldName splits namespace and developer name", () => {
     assert.deepEqual(core.parseCustomFieldName("Foo__c"), { namespace: null, developerName: "Foo" });
     assert.deepEqual(core.parseCustomFieldName("ns__Foo__c"), { namespace: "ns", developerName: "Foo" });

@@ -354,6 +354,28 @@
             .sort((a, b) => a.type.localeCompare(b.type));
     }
 
+    // Shapes grouped distribution records (value + count) into display rows with
+    // per-record-total percentages. Callers query LIMIT (limit + 1) so this can
+    // distinguish "exactly `limit` distinct values" (not truncated) from "more
+    // than `limit`" (truncated): truncation is length > limit, and only then are
+    // the rows capped to `limit` for display.
+    function buildDistributionRows(records, field, totalRecords, limit) {
+        const list = Array.isArray(records) ? records : [];
+        const truncated = list.length > limit;
+        const visible = truncated ? list.slice(0, limit) : list;
+        const rows = visible
+            .map((record) => {
+                const count = Number(record.cnt ?? record.expr0 ?? 0);
+                return {
+                    value: record[field] ?? null,
+                    count,
+                    percentage: totalRecords ? count / totalRecords : 0
+                };
+            })
+            .filter((row) => row.count > 0);
+        return { rows, truncated };
+    }
+
     // Adds a per-period percentage to grouped timeline rows (each value's share of
     // its own month) and drops empty rows.
     function normalizeTimelineRows(rows = []) {
@@ -494,6 +516,7 @@
         buildDependencyQuery,
         extractFirstId,
         groupDependencies,
+        buildDistributionRows,
         normalizeTimelineRows,
         parseOrgIdFromCookie,
         findSessionCookieForOrg,
