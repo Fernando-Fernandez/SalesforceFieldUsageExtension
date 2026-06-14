@@ -1,5 +1,6 @@
 (function () {
     const GET_REPORT_DATA = "getReportData";
+    const GET_HOST_SESSION = "getHostSession";
 
     // Pure data-transform helpers live in scripts/lib/usage-core.js (loaded before
     // this script and unit-tested under node:test). Pull them in as locals so the
@@ -10,13 +11,19 @@
         formatPercentage,
         normalizePercentage,
         formatDistributionValue,
-        getSortValue,
         sortResults,
         formatTimelinePeriod,
         getTimelinePeriods,
         getTimelineValues,
         buildTimelineGroupMap,
-        getTimelineColor
+        getTimelineColor,
+        sanitizeDomain,
+        isAuthFailureStatus,
+        parseCustomFieldName,
+        buildCustomFieldIdQuery,
+        buildDependencyQuery,
+        extractFirstId,
+        groupDependencies
     } = globalThis.SFUsageCore;
 
     const statusEl = document.getElementById("reportStatus");
@@ -36,7 +43,12 @@
         summaryTimeline: [],
         mode: "summary",
         sortKey: null,
-        sortDirection: "asc"
+        sortDirection: "asc",
+        // Connection info for on-demand dependency lookups. The session token is
+        // fetched lazily from the background worker and kept only in memory.
+        host: null,
+        apiVersion: null,
+        session: null
     };
 
     document.addEventListener("DOMContentLoaded", init);
@@ -58,6 +70,8 @@
             }
             state.results = reportData.results;
             state.summaryTimeline = Array.isArray(reportData.summaryTimeline) ? reportData.summaryTimeline : [];
+            state.host = reportData.host || null;
+            state.apiVersion = reportData.apiVersion || null;
             renderMeta(reportData.generatedAt);
 
             const hasDistribution = state.results.some((result) => Array.isArray(result.rows));
@@ -115,6 +129,107 @@
         });
     }
 
+    // --- on-demand field dependency lookup ---------------------------------
+
+    const DEFAULT_API_VERSION = "v60.0";
+
+    // Requests the session for the report's org from the background worker (same
+    // path the popup uses) and caches it in memory only.
+    function getReportSession() {
+        if (state.session) {
+            return Promise.resolve(state.session);
+        }
+        if (!state.host) {
+            return Promise.reject(new Error("Connection info unavailable. Reopen the report from the popup."));
+        }
+        return new Promise((resolve, reject) => {
+            chrome.runtime.sendMessage(
+                { message: GET_HOST_SESSION, url: `https://${state.host}/` },
+                (response) => {
+                    if (chrome.runtime.lastError) {
+                        reject(new Error(chrome.runtime.lastError.message));
+                        return;
+                    }
+                    if (!response || !response.session) {
+                        reject(new Error("Unable to read Salesforce session. Verify you are logged in."));
+                        return;
+                    }
+                    state.session = response.session;
+                    state.host = sanitizeDomain(response.domain) || state.host;
+                    resolve(state.session);
+                }
+            );
+        });
+    }
+
+    // Low-level GET against an absolute Tooling path (a /services/data/... URL or
+    // a nextRecordsUrl), with a single 401-triggered session refresh.
+    async function toolingFetch(path, allowRetry = true) {
+        const session = await getReportSession();
+        const response = await fetch(`https://${state.host}${path}`, {
+            method: "GET",
+            headers: {
+                "Content-Type": "application/json",
+                "Authorization": `Bearer ${session}`
+            }
+        });
+        if (isAuthFailureStatus(response.status) && allowRetry) {
+            state.session = null; // force a fresh session, then retry once
+            return toolingFetch(path, false);
+        }
+        if (!response.ok) {
+            const text = await response.text();
+            throw new Error(`Salesforce API error (${response.status}): ${text}`);
+        }
+        return response.json();
+    }
+
+    function toolingQuery(soql) {
+        const version = state.apiVersion || DEFAULT_API_VERSION;
+        return toolingFetch(`/services/data/${version}/tooling/query/?q=${encodeURIComponent(soql)}`);
+    }
+
+    // Runs a Tooling query and follows nextRecordsUrl to completion, returning all
+    // records. The query API pages at ~2000 rows; without this a heavily-referenced
+    // field would silently drop dependencies beyond the first page.
+    async function toolingQueryAllRecords(soql) {
+        let page = await toolingQuery(soql);
+        const records = Array.isArray(page.records) ? page.records.slice() : [];
+        while (!page.done && page.nextRecordsUrl) {
+            page = await toolingFetch(page.nextRecordsUrl);
+            if (Array.isArray(page.records)) {
+                records.push(...page.records);
+            }
+        }
+        return records;
+    }
+
+    // Resolves the field to its CustomField id, then lists the metadata that
+    // references it. Returns { dependencies, message } where a message describes
+    // why the list is empty (standard field, not found, or no references).
+    async function fetchFieldDependencies(result) {
+        const parsed = parseCustomFieldName(result.field);
+        if (!parsed) {
+            return { dependencies: [], message: "Dependency analysis is available for custom fields only." };
+        }
+        const idResponse = await toolingQuery(
+            buildCustomFieldIdQuery(result.sobject, parsed.developerName, parsed.namespace)
+        );
+        const fieldId = extractFirstId(idResponse);
+        if (!fieldId) {
+            return { dependencies: [], message: "This field was not found in the org's custom field metadata." };
+        }
+        const depRecords = await toolingQueryAllRecords(buildDependencyQuery(fieldId));
+        const dependencies = groupDependencies(depRecords);
+        if (!dependencies.length) {
+            return {
+                dependencies: [],
+                message: "Not referenced by any tracked metadata. (The Dependency API is Beta and may miss some references.)"
+            };
+        }
+        return { dependencies, message: "" };
+    }
+
     function renderMeta(timestamp) {
         if (!metaEl) {
             return;
@@ -135,7 +250,7 @@
         results.forEach((result) => {
             const row = document.createElement("tr");
             row.appendChild(createCell(result.sobjectLabel));
-            row.appendChild(createCell(result.fieldLabel));
+            row.appendChild(createSummaryFieldCell(result));
             row.appendChild(createCell(formatNumber(result.sobjectCount)));
             row.appendChild(createCell(formatNumber(result.nonNullCount)));
             row.appendChild(createCell(formatPercentage(result.nonNullPercentage)));
@@ -148,6 +263,64 @@
         const cell = document.createElement("td");
         cell.textContent = text ?? "—";
         return cell;
+    }
+
+    // Field cell for the summary table: the field name as plain text plus, for a
+    // custom field (with connection info available), a small button that loads its
+    // metadata dependencies inline. The fetched result is cached on the result
+    // object so it survives re-sorts.
+    function createSummaryFieldCell(result) {
+        const cell = document.createElement("td");
+
+        const name = document.createElement("div");
+        name.className = "summary-field-name";
+        name.textContent = result.fieldLabel ?? result.field ?? "—";
+        cell.appendChild(name);
+
+        if (!state.host || !parseCustomFieldName(result.field)) {
+            return cell;
+        }
+
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "summary-dependencies__button";
+        button.textContent = "Where is this field used?";
+
+        const output = document.createElement("div");
+        output.className = "summary-dependencies__output";
+
+        if (result.dependencyResult) {
+            renderSummaryDependencies(output, result.dependencyResult);
+            button.hidden = true;
+        }
+
+        button.addEventListener("click", async () => {
+            button.disabled = true;
+            appendDependencyNote(output, "Looking up references…", true);
+            try {
+                const res = await fetchFieldDependencies(result);
+                result.dependencyResult = res;
+                renderSummaryDependencies(output, res);
+                button.hidden = true;
+            } catch (error) {
+                output.innerHTML = "";
+                appendDependencyNote(output, `Dependency analysis unavailable: ${error.message || error}`);
+                button.disabled = false;
+            }
+        });
+
+        cell.appendChild(button);
+        cell.appendChild(output);
+        return cell;
+    }
+
+    function renderSummaryDependencies(output, res) {
+        output.innerHTML = "";
+        if (res.message) {
+            appendDependencyNote(output, res.message);
+        } else {
+            output.appendChild(buildDependencyList(res.dependencies));
+        }
     }
 
     function setStatus(message, type) {
@@ -419,8 +592,94 @@
                 card.appendChild(timelineEl);
             }
 
+            card.appendChild(buildDependencySection(result));
+
             distributionContainerEl.appendChild(card);
         });
+    }
+
+    // Renders the "Field Usage in Metadata" block: a button that, on click, runs
+    // the on-demand dependency lookup and reveals where the field is referenced.
+    function buildDependencySection(result) {
+        const container = document.createElement("div");
+        container.className = "distribution-dependencies";
+
+        const title = document.createElement("h4");
+        title.textContent = "Field Usage in Metadata";
+        container.appendChild(title);
+
+        if (!parseCustomFieldName(result.field)) {
+            appendDependencyNote(container, "Dependency analysis is available for custom fields only.");
+            return container;
+        }
+        if (!state.host) {
+            appendDependencyNote(container, "Reopen the report from the popup to look up where this field is used.");
+            return container;
+        }
+
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "distribution-dependencies__button";
+        button.textContent = "Where is this field used?";
+
+        const output = document.createElement("div");
+        output.className = "distribution-dependencies__output";
+
+        button.addEventListener("click", async () => {
+            button.disabled = true;
+            appendDependencyNote(output, "Looking up references…", true);
+            try {
+                const { dependencies, message } = await fetchFieldDependencies(result);
+                output.innerHTML = "";
+                if (message) {
+                    appendDependencyNote(output, message);
+                } else {
+                    output.appendChild(buildDependencyList(dependencies));
+                }
+                button.hidden = true;
+            } catch (error) {
+                output.innerHTML = "";
+                appendDependencyNote(output, `Dependency analysis unavailable: ${error.message || error}`);
+                button.disabled = false;
+            }
+        });
+
+        container.appendChild(button);
+        container.appendChild(output);
+        return container;
+    }
+
+    function appendDependencyNote(parent, text, clear) {
+        if (clear) {
+            parent.innerHTML = "";
+        }
+        const note = document.createElement("p");
+        note.className = "distribution-dependencies__note";
+        note.textContent = text;
+        parent.appendChild(note);
+    }
+
+    function buildDependencyList(groups) {
+        const total = groups.reduce((sum, group) => sum + group.count, 0);
+        const wrapper = document.createElement("div");
+
+        const summary = document.createElement("p");
+        summary.className = "distribution-dependencies__summary";
+        summary.textContent = `Referenced by ${total} component${total === 1 ? "" : "s"}:`;
+        wrapper.appendChild(summary);
+
+        const list = document.createElement("ul");
+        list.className = "distribution-dependencies__list";
+        groups.forEach((group) => {
+            const item = document.createElement("li");
+            const label = document.createElement("strong");
+            label.textContent = `${group.type} (${group.count}): `;
+            item.appendChild(label);
+            item.appendChild(document.createTextNode(group.names.join(", ")));
+            list.appendChild(item);
+        });
+        wrapper.appendChild(list);
+        return wrapper;
     }
 
     function buildDistributionChart(rows) {

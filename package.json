@@ -5,7 +5,12 @@
   "description": "Reports Salesforce field usage and trends to help with data quality and other issues.",
   "scripts": {
     "test": "node --test",
+    "lint": "eslint .",
     "check": "node --check scripts/popup.js && node --check scripts/report.js && node --check scripts/background.js && node --check scripts/content.js && node --check scripts/lib/usage-core.js"
   },
-  "license": "SEE LICENSE IN LICENSE"
+  "license": "SEE LICENSE IN LICENSE",
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.5.0"
+  }
 }

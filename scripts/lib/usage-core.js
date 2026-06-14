@@ -280,6 +280,92 @@
         return entry && typeof entry.count === "number" ? entry.count : null;
     }
 
+    // --- field dependency ("where is this field used?") helpers ------------
+
+    // Splits a custom field API name into its Tooling { namespace, developerName }.
+    // A custom field name is "[namespace__]DeveloperName__c" (field DeveloperNames
+    // cannot contain "__", so the only "__" is the namespace separator). Returns
+    // null for names without a "__c" suffix (standard fields have no CustomField
+    // record). namespace is null when the field is not from a managed package.
+    function parseCustomFieldName(apiName) {
+        if (typeof apiName !== "string" || !/__c$/i.test(apiName)) {
+            return null;
+        }
+        const withoutSuffix = apiName.replace(/__c$/i, "");
+        const separator = withoutSuffix.indexOf("__");
+        const namespace = separator === -1 ? null : withoutSuffix.slice(0, separator);
+        const developerName = separator === -1 ? withoutSuffix : withoutSuffix.slice(separator + 2);
+        if (!developerName) {
+            return null;
+        }
+        return { namespace: namespace || null, developerName };
+    }
+
+    // Escapes single quotes so a value can be embedded in a SOQL string literal.
+    function escapeSoqlLiteral(value) {
+        return String(value).replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+    }
+
+    // SOQL to resolve a custom field to its Tooling CustomField Id. Uses the
+    // EntityDefinition relationship so it works for standard and custom objects
+    // without resolving TableEnumOrId. NamespacePrefix is always constrained — to
+    // the field's namespace when managed, or null otherwise — so a managed and an
+    // unmanaged field sharing a DeveloperName on the same object don't collide.
+    function buildCustomFieldIdQuery(object, developerName, namespace) {
+        const namespaceClause = namespace
+            ? "NamespacePrefix = '" + escapeSoqlLiteral(namespace) + "'"
+            : "NamespacePrefix = null";
+        return (
+            "SELECT Id FROM CustomField WHERE EntityDefinition.QualifiedApiName = '" +
+            escapeSoqlLiteral(object) +
+            "' AND DeveloperName = '" +
+            escapeSoqlLiteral(developerName) +
+            "' AND " +
+            namespaceClause +
+            " LIMIT 1"
+        );
+    }
+
+    // SOQL to list the metadata components that reference a given component id.
+    function buildDependencyQuery(id) {
+        return (
+            "SELECT MetadataComponentName, MetadataComponentType FROM " +
+            "MetadataComponentDependency WHERE RefMetadataComponentId = '" +
+            escapeSoqlLiteral(id) +
+            "'"
+        );
+    }
+
+    // Pulls the first record's Id out of a Tooling query response, or null.
+    function extractFirstId(response) {
+        const records = response && Array.isArray(response.records) ? response.records : null;
+        return records && records[0] && records[0].Id ? records[0].Id : null;
+    }
+
+    // Groups MetadataComponentDependency rows by component type into
+    // [{ type, count, names }], sorted by type, with de-duplicated sorted names.
+    function groupDependencies(rows) {
+        const byType = new Map();
+        (rows || []).forEach((row) => {
+            if (!row) {
+                return;
+            }
+            const type = row.MetadataComponentType || "Unknown";
+            const name = row.MetadataComponentName || "(unnamed)";
+            if (!byType.has(type)) {
+                byType.set(type, new Set());
+            }
+            byType.get(type).add(name);
+        });
+        return Array.from(byType.entries())
+            .map(([type, names]) => ({
+                type,
+                count: names.size,
+                names: Array.from(names).sort((a, b) => a.localeCompare(b))
+            }))
+            .sort((a, b) => a.type.localeCompare(b.type));
+    }
+
     // Adds a per-period percentage to grouped timeline rows (each value's share of
     // its own month) and drops empty rows.
     function normalizeTimelineRows(rows = []) {
@@ -416,6 +502,11 @@
         isAuthFailureStatus,
         pickLatestApiVersion,
         extractRecordCount,
+        parseCustomFieldName,
+        buildCustomFieldIdQuery,
+        buildDependencyQuery,
+        extractFirstId,
+        groupDependencies,
         normalizeTimelineRows,
         parseOrgIdFromCookie,
         findSessionCookieForOrg,
