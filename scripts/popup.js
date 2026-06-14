@@ -25,6 +25,7 @@
         extractCompositeError,
         isAuthFailureStatus,
         pickLatestApiVersion,
+        buildDistributionRows,
         normalizeTimelineRows
     } = globalThis.SFUsageCore;
 
@@ -986,23 +987,14 @@
         if (fieldMeta && !fieldMeta.groupable) {
             return fetchNonGroupableDistribution(sobject, field, totalRecords);
         }
-        const query = `SELECT ${field}, COUNT(Id) cnt FROM ${sobject} GROUP BY ${field} ORDER BY COUNT(Id) DESC LIMIT ${DISTINCT_VALUE_LIMIT}`;
+        // Ask for one more than the display cap so an exactly-cap result is not
+        // misreported as truncated (buildDistributionRows treats length > cap as
+        // truncated and caps the rows for display).
+        const fetchLimit = DISTINCT_VALUE_LIMIT + 1;
+        const query = `SELECT ${field}, COUNT(Id) cnt FROM ${sobject} GROUP BY ${field} ORDER BY COUNT(Id) DESC LIMIT ${fetchLimit}`;
         const endpoint = `https://${state.host}/services/data/${state.apiVersion}/query/?q=${encodeURIComponent(query)}`;
         const data = await authenticatedFetch(endpoint);
-        const records = data.records || [];
-        const rows = records
-            .map((record) => {
-                const count = Number(record.cnt ?? record.expr0 ?? 0);
-                return {
-                    value: record[field] ?? null,
-                    count,
-                    percentage: totalRecords ? count / totalRecords : 0
-                };
-            })
-            .filter((row) => row.count > 0);
-        // A full result set has fewer rows than the cap; hitting the cap means
-        // Salesforce dropped lower-frequency values from the grouping.
-        const truncated = records.length >= DISTINCT_VALUE_LIMIT;
+        const { rows, truncated } = buildDistributionRows(data.records, field, totalRecords, DISTINCT_VALUE_LIMIT);
         return { rows, truncated, distinctLimit: DISTINCT_VALUE_LIMIT };
     }
 
