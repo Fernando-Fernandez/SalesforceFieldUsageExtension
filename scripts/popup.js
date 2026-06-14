@@ -106,13 +106,13 @@
 
     // Saves the current object/field selection for this org so the next visit can
     // restore it. Best-effort; failures are non-fatal.
-    function persistSelections() {
+    function persistSelections({ sobjects = state.selectedSObjects, fields = state.selectedFields } = {}) {
         if (!state.host || !chrome.storage?.local) {
             return;
         }
         chrome.storage.local.get(SELECTIONS_STORAGE_KEY).then((stored) => {
             const all = stored?.[SELECTIONS_STORAGE_KEY] || {};
-            all[state.host] = selectionsToStorage(state.selectedSObjects, state.selectedFields);
+            all[state.host] = selectionsToStorage(sobjects, fields);
             return chrome.storage.local.set({ [SELECTIONS_STORAGE_KEY]: all });
         }).catch((error) => console.warn("Unable to persist selections.", error));
     }
@@ -797,7 +797,7 @@
         }
 
         // Remember what was run so the next visit to this org can restore it.
-        persistSelections();
+        persistSelections({ sobjects: targetSObjects });
 
         try {
             await ensureFieldsLoaded(targetSObjects);
