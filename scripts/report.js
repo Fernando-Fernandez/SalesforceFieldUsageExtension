@@ -19,7 +19,7 @@
         getTimelineColor,
         sanitizeDomain,
         isAuthFailureStatus,
-        customFieldDeveloperName,
+        parseCustomFieldName,
         buildCustomFieldIdQuery,
         buildDependencyQuery,
         extractFirstId,
@@ -188,11 +188,13 @@
     // references it. Returns { dependencies, message } where a message describes
     // why the list is empty (standard field, not found, or no references).
     async function fetchFieldDependencies(result) {
-        const developerName = customFieldDeveloperName(result.field);
-        if (!developerName) {
+        const parsed = parseCustomFieldName(result.field);
+        if (!parsed) {
             return { dependencies: [], message: "Dependency analysis is available for custom fields only." };
         }
-        const idResponse = await toolingQuery(buildCustomFieldIdQuery(result.sobject, developerName));
+        const idResponse = await toolingQuery(
+            buildCustomFieldIdQuery(result.sobject, parsed.developerName, parsed.namespace)
+        );
         const fieldId = extractFirstId(idResponse);
         if (!fieldId) {
             return { dependencies: [], message: "This field was not found in the org's custom field metadata." };
@@ -255,7 +257,7 @@
         name.textContent = result.fieldLabel ?? result.field ?? "—";
         cell.appendChild(name);
 
-        if (!state.host || !customFieldDeveloperName(result.field)) {
+        if (!state.host || !parseCustomFieldName(result.field)) {
             return cell;
         }
 
@@ -586,7 +588,7 @@
         title.textContent = "Field Usage in Metadata";
         container.appendChild(title);
 
-        if (!customFieldDeveloperName(result.field)) {
+        if (!parseCustomFieldName(result.field)) {
             appendDependencyNote(container, "Dependency analysis is available for custom fields only.");
             return container;
         }

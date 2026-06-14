@@ -282,19 +282,23 @@
 
     // --- field dependency ("where is this field used?") helpers ------------
 
-    // Derives a custom field's Tooling DeveloperName from its API name: drops the
-    // trailing "__c" and any leading "namespace__" prefix. Returns null for names
-    // without a "__c" suffix (standard fields), which have no CustomField record.
-    function customFieldDeveloperName(apiName) {
+    // Splits a custom field API name into its Tooling { namespace, developerName }.
+    // A custom field name is "[namespace__]DeveloperName__c" (field DeveloperNames
+    // cannot contain "__", so the only "__" is the namespace separator). Returns
+    // null for names without a "__c" suffix (standard fields have no CustomField
+    // record). namespace is null when the field is not from a managed package.
+    function parseCustomFieldName(apiName) {
         if (typeof apiName !== "string" || !/__c$/i.test(apiName)) {
             return null;
         }
         const withoutSuffix = apiName.replace(/__c$/i, "");
-        // A managed field is "namespace__Name"; the DeveloperName is the part after
-        // the last remaining "__" separator. A non-namespaced field has none.
-        const separator = withoutSuffix.lastIndexOf("__");
+        const separator = withoutSuffix.indexOf("__");
+        const namespace = separator === -1 ? null : withoutSuffix.slice(0, separator);
         const developerName = separator === -1 ? withoutSuffix : withoutSuffix.slice(separator + 2);
-        return developerName || null;
+        if (!developerName) {
+            return null;
+        }
+        return { namespace: namespace || null, developerName };
     }
 
     // Escapes single quotes so a value can be embedded in a SOQL string literal.
@@ -304,14 +308,21 @@
 
     // SOQL to resolve a custom field to its Tooling CustomField Id. Uses the
     // EntityDefinition relationship so it works for standard and custom objects
-    // without resolving TableEnumOrId.
-    function buildCustomFieldIdQuery(object, developerName) {
+    // without resolving TableEnumOrId. NamespacePrefix is always constrained — to
+    // the field's namespace when managed, or null otherwise — so a managed and an
+    // unmanaged field sharing a DeveloperName on the same object don't collide.
+    function buildCustomFieldIdQuery(object, developerName, namespace) {
+        const namespaceClause = namespace
+            ? "NamespacePrefix = '" + escapeSoqlLiteral(namespace) + "'"
+            : "NamespacePrefix = null";
         return (
             "SELECT Id FROM CustomField WHERE EntityDefinition.QualifiedApiName = '" +
             escapeSoqlLiteral(object) +
             "' AND DeveloperName = '" +
             escapeSoqlLiteral(developerName) +
-            "' LIMIT 1"
+            "' AND " +
+            namespaceClause +
+            " LIMIT 1"
         );
     }
 
@@ -491,7 +502,7 @@
         isAuthFailureStatus,
         pickLatestApiVersion,
         extractRecordCount,
-        customFieldDeveloperName,
+        parseCustomFieldName,
         buildCustomFieldIdQuery,
         buildDependencyQuery,
         extractFirstId,

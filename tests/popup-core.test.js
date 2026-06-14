@@ -169,31 +169,42 @@ test("extractRecordCount accepts a zero count", () => {
     assert.equal(core.extractRecordCount({ sObjects: [{ name: "Account", count: 0 }] }, "Account"), 0);
 });
 
-test("customFieldDeveloperName strips __c and namespace prefixes", () => {
-    assert.equal(core.customFieldDeveloperName("Foo__c"), "Foo");
-    assert.equal(core.customFieldDeveloperName("ns__Foo__c"), "Foo");
-    assert.equal(core.customFieldDeveloperName("My_Field__c"), "My_Field");
+test("parseCustomFieldName splits namespace and developer name", () => {
+    assert.deepEqual(core.parseCustomFieldName("Foo__c"), { namespace: null, developerName: "Foo" });
+    assert.deepEqual(core.parseCustomFieldName("ns__Foo__c"), { namespace: "ns", developerName: "Foo" });
+    // Single underscores belong to the developer name; only the namespace uses "__".
+    assert.deepEqual(core.parseCustomFieldName("My_Field__c"), { namespace: null, developerName: "My_Field" });
+    assert.deepEqual(core.parseCustomFieldName("pkg__My_Field__c"), { namespace: "pkg", developerName: "My_Field" });
 });
 
-test("customFieldDeveloperName returns null for standard fields", () => {
-    assert.equal(core.customFieldDeveloperName("Industry"), null);
-    assert.equal(core.customFieldDeveloperName("Name"), null);
-    assert.equal(core.customFieldDeveloperName(null), null);
-    assert.equal(core.customFieldDeveloperName(42), null);
+test("parseCustomFieldName returns null for standard/invalid fields", () => {
+    assert.equal(core.parseCustomFieldName("Industry"), null);
+    assert.equal(core.parseCustomFieldName("Name"), null);
+    assert.equal(core.parseCustomFieldName(null), null);
+    assert.equal(core.parseCustomFieldName(42), null);
 });
 
-test("buildCustomFieldIdQuery uses EntityDefinition and DeveloperName", () => {
-    const q = core.buildCustomFieldIdQuery("Account", "My_Field");
+test("buildCustomFieldIdQuery constrains NamespacePrefix to null when unmanaged", () => {
+    const q = core.buildCustomFieldIdQuery("Account", "My_Field", null);
     assert.match(q, /FROM CustomField/);
     assert.match(q, /EntityDefinition\.QualifiedApiName = 'Account'/);
     assert.match(q, /DeveloperName = 'My_Field'/);
+    assert.match(q, /NamespacePrefix = null/);
     assert.match(q, /LIMIT 1$/);
 });
 
+test("buildCustomFieldIdQuery constrains NamespacePrefix to the package when managed", () => {
+    const q = core.buildCustomFieldIdQuery("Account", "Status", "pkg");
+    assert.match(q, /DeveloperName = 'Status'/);
+    assert.match(q, /NamespacePrefix = 'pkg'/);
+    assert.doesNotMatch(q, /NamespacePrefix = null/);
+});
+
 test("buildCustomFieldIdQuery escapes single quotes to prevent SOQL injection", () => {
-    const q = core.buildCustomFieldIdQuery("Acc'ount", "Fie'ld");
+    const q = core.buildCustomFieldIdQuery("Acc'ount", "Fie'ld", "n's");
     assert.match(q, /'Acc\\'ount'/);
     assert.match(q, /'Fie\\'ld'/);
+    assert.match(q, /'n\\'s'/);
 });
 
 test("buildDependencyQuery targets RefMetadataComponentId", () => {
