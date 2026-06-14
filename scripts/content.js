@@ -25,7 +25,6 @@ if( sfElement ) {
         , url: location.href 
     };
     chrome.runtime.sendMessage( getHostMessage, resultData => {
-        //console.log( resultData );
         sfHost = resultData.domain;
         sessionId = resultData.session;
     } );

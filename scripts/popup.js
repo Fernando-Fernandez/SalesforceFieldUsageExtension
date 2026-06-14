@@ -35,7 +35,6 @@
     const sobjectSelectedEl = document.getElementById("sobjectSelected");
     const addSobjectBtn = document.getElementById("addSobjectBtn");
     const removeSobjectBtn = document.getElementById("removeSobjectBtn");
-    const fieldSectionEl = document.getElementById("fieldSection");
     const fieldAvailableEl = document.getElementById("fieldAvailable");
     const fieldSelectedEl = document.getElementById("fieldSelected");
     const addFieldBtn = document.getElementById("addFieldBtn");
@@ -191,8 +190,6 @@
                     reject(new Error(chrome.runtime.lastError.message));
                     return;
                 }
-                console.log("Active tabs: ", tabs);
-                console.log("Active tab: ", tabs && tabs[0]);
                 resolve(tabs && tabs[0]);
             });
         });
@@ -600,6 +597,11 @@
         const payload = {
             reportId: generateReportId(),
             generatedAt: Date.now(),
+            // Non-sensitive connection info so the report tab can run on-demand
+            // dependency lookups; the session token is fetched separately and
+            // never persisted.
+            host: state.host,
+            apiVersion: state.apiVersion,
             ...data
         };
         return new Promise((resolve, reject) => {
@@ -656,16 +658,10 @@
         processStatusEl.textContent = message || "";
     }
 
-    function updateDistributionProgress(fieldCompleted, fieldTotal, timelineCompleted, timelineTotal) {
-        if (!timelineTotal) {
-            setProcessStatus(`Field queries: ${fieldCompleted}/${fieldTotal}`);
-            return;
-        }
-        const parts = [
-            `Field queries: ${fieldCompleted}/${fieldTotal}`,
-            `Timeline queries: ${timelineCompleted}/${timelineTotal}`
-        ];
-        setProcessStatus(parts.join(" | "));
+    function updateDistributionProgress(fieldCompleted, fieldTotal) {
+        // Each field runs its distribution query and its 12-month timeline together,
+        // so a single counter reflects both.
+        setProcessStatus(`Fields processed: ${fieldCompleted}/${fieldTotal}`);
     }
 
     async function handleProcessSelections() {
@@ -725,11 +721,10 @@
         }
 
         setStatus("Processing field distributions…", "info");
-        updateDistributionProgress(0, selections.length, 0, selections.length);
+        updateDistributionProgress(0, selections.length);
 
         const results = [];
         let completedFields = 0;
-        let completedTimelines = 0;
         const totalSelections = selections.length;
 
         for (const { sobject, field } of selections) {
@@ -741,16 +736,14 @@
                     sobject,
                     sobjectLabel,
                     field,
-                    fieldLabel,
-                    recordCount: null,
+                    fieldLabel,                    recordCount: null,
                     rows: [],
                     timeline: [],
                     timelineMessage: "",
                     status: "Skipped: field metadata unavailable."
                 });
                 completedFields += 1;
-                completedTimelines += 1;
-                updateDistributionProgress(completedFields, totalSelections, completedTimelines, totalSelections);
+                updateDistributionProgress(completedFields, totalSelections);
                 continue;
             }
             if (!isFilterableField(fieldMeta)) {
@@ -758,16 +751,14 @@
                     sobject,
                     sobjectLabel,
                     field,
-                    fieldLabel,
-                    recordCount: null,
+                    fieldLabel,                    recordCount: null,
                     rows: [],
                     timeline: [],
                     timelineMessage: "",
                     status: "Skipped: textarea/address fields cannot be used as filter criteria."
                 });
                 completedFields += 1;
-                completedTimelines += 1;
-                updateDistributionProgress(completedFields, totalSelections, completedTimelines, totalSelections);
+                updateDistributionProgress(completedFields, totalSelections);
                 continue;
             }
             try {
@@ -790,8 +781,7 @@
                     sobject,
                     sobjectLabel,
                     field,
-                    fieldLabel,
-                    recordCount: totalRecords,
+                    fieldLabel,                    recordCount: totalRecords,
                     rows: distribution.rows,
                     truncated: !!distribution.truncated,
                     distinctLimit: distribution.distinctLimit ?? null,
@@ -799,24 +789,21 @@
                     timelineMessage,
                     status: statusMessage
                 });
-                completedTimelines += 1;
             } catch (error) {
                 console.error(`Failed to process ${sobject}.${field}`, error);
                 results.push({
                     sobject,
                     sobjectLabel,
                     field,
-                    fieldLabel,
-                    recordCount: null,
+                    fieldLabel,                    recordCount: null,
                     rows: [],
                     timeline: [],
                     timelineMessage: "",
                     status: `Error: ${error.message || error}`
                 });
-                completedTimelines += 1;
             }
             completedFields += 1;
-            updateDistributionProgress(completedFields, totalSelections, completedTimelines, totalSelections);
+            updateDistributionProgress(completedFields, totalSelections);
         }
 
         if (results.length) {
