@@ -453,6 +453,12 @@ th[data-sort-direction="desc"]::after {
     color: #2f3c4d;
 }
 
+.recordtype-usage__total td {
+    font-weight: 600;
+    background: #f5f8ff;
+    border-top: 2px solid #c9d6ef;
+}
+
 .recordtype-usage__note {
     margin: 0.2rem 0;
     font-size: 0.85rem;
