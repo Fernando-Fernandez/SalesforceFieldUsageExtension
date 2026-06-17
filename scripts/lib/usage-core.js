@@ -624,6 +624,30 @@
             }));
     }
 
+    // Sums the per-record-type counts so the breakdown can show an exact,
+    // reconciled total. In the summary flow the headline non-null figure is a
+    // query-optimizer estimate, so this exact sum is expected to differ from it.
+    function summarizeRecordTypeUsage(rows) {
+        const list = Array.isArray(rows) ? rows : [];
+        let total = 0;
+        let populated = 0;
+        list.forEach((row) => {
+            const t = Number(row && row.total);
+            const p = Number(row && row.populated);
+            if (Number.isFinite(t)) {
+                total += t;
+            }
+            if (Number.isFinite(p)) {
+                populated += p;
+            }
+        });
+        return {
+            total,
+            populated,
+            percentage: total > 0 ? populated / total : 0
+        };
+    }
+
     function getTimelineColor(index) {
         const palette = [
             "#4c9ffe",
@@ -682,7 +706,8 @@
         findSessionCookieForOrg,
         serializeTabSessions,
         deserializeTabSessions,
-        pruneReportStore
+        pruneReportStore,
+        summarizeRecordTypeUsage
     };
 
     if (typeof module !== "undefined" && module.exports) {

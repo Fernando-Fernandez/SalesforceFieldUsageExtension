@@ -27,7 +27,8 @@
         extractFirstId,
         groupDependencies,
         extractUsedPicklistValues,
-        analyzePicklistHealth
+        analyzePicklistHealth,
+        summarizeRecordTypeUsage
     } = globalThis.SFUsageCore;
 
     const statusEl = document.getElementById("reportStatus");
@@ -551,7 +552,9 @@
     }
 
     function buildSummaryRecordTypeControls(result) {
-        if (!state.host) {
+        // See buildRecordTypeUsageSection: only filterable fields can be queried
+        // with "field != null", so non-filterable fields get no record-type button.
+        if (!state.host || !result.filterable) {
             return null;
         }
         const container = document.createElement("div");
@@ -1078,6 +1081,12 @@
     }
 
     function buildRecordTypeUsageSection(result) {
+        // Non-filterable fields (long text area, rich text, etc.) cannot appear in a
+        // WHERE clause, so the "field != null" record-type query would fail. Skip
+        // the control entirely for them.
+        if (!result.filterable) {
+            return null;
+        }
         const container = document.createElement("div");
         container.className = "distribution-recordtypes";
 
@@ -1136,7 +1145,7 @@
                 if (!result.recordTypeUsage) {
                     result.recordTypeUsage = await fetchRecordTypeUsage(result);
                 }
-                renderRecordTypeUsage(output, result.recordTypeUsage, result);
+                renderRecordTypeUsage(output, result.recordTypeUsage, result, variant);
                 button.hidden = true;
             } catch (error) {
                 appendRecordTypeNote(output, `Record-type usage unavailable: ${error.message || error}`, true);
@@ -1155,7 +1164,7 @@
         parent.appendChild(note);
     }
 
-    function renderRecordTypeUsage(container, usage, result) {
+    function renderRecordTypeUsage(container, usage, result, variant) {
         container.innerHTML = "";
         const rows = Array.isArray(usage?.rows) ? usage.rows : [];
         if (!rows.length) {
@@ -1185,8 +1194,29 @@
             tr.appendChild(createCell(formatPercentage(row.percentage)));
             tbody.appendChild(tr);
         });
+
+        // Exact reconciled total so the per-type figures visibly add up. These are
+        // exact COUNT() values; in the summary flow the headline figures are
+        // query-optimizer estimates, so the two are not expected to match.
+        const totals = summarizeRecordTypeUsage(rows);
+        const totalRow = document.createElement("tr");
+        totalRow.className = "recordtype-usage__total";
+        totalRow.appendChild(createCell("All record types"));
+        totalRow.appendChild(createCell(formatNumber(totals.total)));
+        totalRow.appendChild(createCell(formatNumber(totals.populated)));
+        totalRow.appendChild(createCell(formatPercentage(totals.percentage)));
+        tbody.appendChild(totalRow);
+
         table.appendChild(tbody);
         container.appendChild(table);
+
+        if (variant === "summary") {
+            appendRecordTypeNote(
+                container,
+                "Counts are exact record totals and may differ from the estimated " +
+                    "figures in the summary table above, which come from the query optimizer."
+            );
+        }
     }
 
     async function fetchRecordTypeUsage(result) {

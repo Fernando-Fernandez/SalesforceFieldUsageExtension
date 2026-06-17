@@ -245,6 +245,31 @@ test("buildTimelineGroupMap sums counts per period and value", () => {
     assert.deepEqual(map.get("2025-2"), { Won: 4 });
 });
 
+test("summarizeRecordTypeUsage sums totals and computes an overall percentage", () => {
+    const rows = [
+        { total: 80, populated: 20 },
+        { total: 20, populated: 5 }
+    ];
+    assert.deepEqual(core.summarizeRecordTypeUsage(rows), {
+        total: 100,
+        populated: 25,
+        percentage: 0.25
+    });
+});
+
+test("summarizeRecordTypeUsage ignores non-numeric counts and avoids divide-by-zero", () => {
+    assert.deepEqual(core.summarizeRecordTypeUsage([{ total: "x", populated: null }]), {
+        total: 0,
+        populated: 0,
+        percentage: 0
+    });
+    assert.deepEqual(core.summarizeRecordTypeUsage(null), {
+        total: 0,
+        populated: 0,
+        percentage: 0
+    });
+});
+
 test("getTimelineColor cycles through the palette", () => {
     const first = core.getTimelineColor(0);
     assert.equal(typeof first, "string");
